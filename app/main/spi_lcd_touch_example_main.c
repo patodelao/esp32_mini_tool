@@ -26,18 +26,11 @@
 #include "freertos/event_groups.h"
 
 
-#if CONFIG_EXAMPLE_LCD_CONTROLLER_ILI9341
-#include "esp_lcd_ili9341.h"
-#elif CONFIG_EXAMPLE_LCD_CONTROLLER_GC9A01
-#include "esp_lcd_gc9a01.h"
-#endif
 
-#if CONFIG_EXAMPLE_LCD_TOUCH_CONTROLLER_STMPE610
-#include "esp_lcd_touch_stmpe610.h"
-#endif
-#if CONFIG_EXAMPLE_LCD_TOUCH_CONTROLLER_CST816S
+
+#include "esp_lcd_gc9a01.h"
 #include "esp_lcd_touch_cst816s.h"
-#endif
+
 
 static const char *TAG = "example";
 
@@ -79,21 +72,17 @@ static const char *TAG = "example";
 #define EXAMPLE_LVGL_TASK_STACK_SIZE   (4 * 1024)
 #define EXAMPLE_LVGL_TASK_PRIORITY     2
 
-#if CONFIG_EXAMPLE_LCD_TOUCH_CONTROLLER_CST816S
 #define CONFIG_LCD_TOUCH_RST           13
 #define CONFIG_LCD_TOUCH_INT           5
 #define CONFIG_DISPLAY_CST816S_SDA     6   
 #define CONFIG_DISPLAY_CST816S_SCL     7
-#endif
 
 static SemaphoreHandle_t lvgl_mux = NULL;
 
-#if CONFIG_EXAMPLE_LCD_TOUCH_ENABLED
+
 esp_lcd_touch_handle_t tp = NULL;
-#if CONFIG_EXAMPLE_LCD_TOUCH_CONTROLLER_CST816S
 static SemaphoreHandle_t touch_mux = NULL;
-#endif
-#endif
+
 
 extern void example_lvgl_demo_ui(lv_disp_t *disp);
 extern void example_lvgl_matrix_menu(lv_disp_t *disp);
@@ -168,8 +157,7 @@ static void example_lvgl_port_update_callback(lv_disp_drv_t *drv)
     }
 }
 
-#if CONFIG_EXAMPLE_LCD_TOUCH_ENABLED
-#if CONFIG_EXAMPLE_LCD_TOUCH_CONTROLLER_STMPE610 || CONFIG_EXAMPLE_LCD_TOUCH_CONTROLLER_CST816S
+
 static void example_lvgl_touch_cb(lv_indev_drv_t * drv, lv_indev_data_t * data)
 {
     uint16_t touchpad_x[1] = {0};
@@ -190,8 +178,7 @@ static void example_lvgl_touch_cb(lv_indev_drv_t * drv, lv_indev_data_t * data)
         data->state = LV_INDEV_STATE_RELEASED;
     }
 }
-#endif
-#if CONFIG_EXAMPLE_LCD_TOUCH_CONTROLLER_CST816S
+
 /*
     Define a callback function used by ISR.
 */
@@ -220,8 +207,8 @@ void i2c_init(void)
     i2c_param_config(I2C_MASTER_NUM, &i2c_conf);
     i2c_driver_install(I2C_MASTER_NUM, i2c_conf.mode, 0, 0, 0);
 }
-#endif
-#endif
+
+
 
 static void example_increase_lvgl_tick(void *arg)
 {
@@ -338,8 +325,6 @@ void app_main(void)
     static lv_disp_draw_buf_t disp_buf; // contains internal graphic buffer(s) called draw buffer(s)
     static lv_disp_drv_t disp_drv;      // contains callback functions
 
-#if CONFIG_EXAMPLE_LCD_TOUCH_ENABLED
-#if CONFIG_EXAMPLE_LCD_TOUCH_CONTROLLER_CST816S
     // Define a mutex for the touch and create it before initialize the touch:
     touch_mux = xSemaphoreCreateBinary();
     assert(touch_mux);  
@@ -378,8 +363,8 @@ void app_main(void)
     esp_lcd_panel_io_handle_t tp_io_handle = NULL;
     esp_lcd_new_panel_io_i2c((esp_lcd_i2c_bus_handle_t)0 , &tp_io_config, &tp_io_handle);
     esp_lcd_touch_new_i2c_cst816s(tp_io_handle, &tp_cfg, &tp);     
-#endif
-#endif
+
+
     ESP_LOGI(TAG, "Turn off LCD backlight");
     gpio_config_t bk_gpio_config = {
         .mode = GPIO_MODE_OUTPUT,
@@ -420,47 +405,22 @@ void app_main(void)
         .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
         .bits_per_pixel = 16,
     };
-#if CONFIG_EXAMPLE_LCD_CONTROLLER_ILI9341
-    ESP_LOGI(TAG, "Install ILI9341 panel driver");
-    ESP_ERROR_CHECK(esp_lcd_new_panel_ili9341(io_handle, &panel_config, &panel_handle));
-#elif CONFIG_EXAMPLE_LCD_CONTROLLER_GC9A01
+
     ESP_LOGI(TAG, "Install GC9A01 panel driver");
     ESP_ERROR_CHECK(esp_lcd_new_panel_gc9a01(io_handle, &panel_config, &panel_handle));
-#endif
+
 
     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
-#if CONFIG_EXAMPLE_LCD_CONTROLLER_GC9A01
+
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle, true));
-#endif
+
     ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, true, false));
 
     // user can flush pre-defined pattern to the screen before we turn on the screen or backlight
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
-#if CONFIG_EXAMPLE_LCD_TOUCH_ENABLED
-#if CONFIG_EXAMPLE_LCD_TOUCH_CONTROLLER_STMPE610
-    esp_lcd_panel_io_handle_t tp_io_handle = NULL;
-    esp_lcd_panel_io_spi_config_t tp_io_config = ESP_LCD_TOUCH_IO_SPI_STMPE610_CONFIG(EXAMPLE_PIN_NUM_TOUCH_CS);
-    // Attach the TOUCH to the SPI bus
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &tp_io_config, &tp_io_handle));
 
-    esp_lcd_touch_config_t tp_cfg = {
-        .x_max = EXAMPLE_LCD_H_RES,
-        .y_max = EXAMPLE_LCD_V_RES,
-        .rst_gpio_num = -1,
-        .int_gpio_num = -1,
-        .flags = {
-            .swap_xy = 0,
-            .mirror_x = 0,
-            .mirror_y = 0,
-        },
-    };
-
-    ESP_LOGI(TAG, "Initialize touch controller STMPE610");
-    ESP_ERROR_CHECK(esp_lcd_touch_new_spi_stmpe610(tp_io_handle, &tp_cfg, &tp));    
-#endif // CONFIG_EXAMPLE_LCD_TOUCH_CONTROLLER_STMPE610
-#endif // CONFIG_EXAMPLE_LCD_TOUCH_ENABLED
 
     ESP_LOGI(TAG, "Turn on LCD backlight");
     gpio_set_level(EXAMPLE_PIN_NUM_BK_LIGHT, EXAMPLE_LCD_BK_LIGHT_ON_LEVEL);
@@ -496,8 +456,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_tick_timer, EXAMPLE_LVGL_TICK_PERIOD_MS * 1000));
 
-#if CONFIG_EXAMPLE_LCD_TOUCH_ENABLED
-#if CONFIG_EXAMPLE_LCD_TOUCH_CONTROLLER_STMPE610 || CONFIG_EXAMPLE_LCD_TOUCH_CONTROLLER_CST816S
+
     static lv_indev_drv_t indev_drv;    // Input device driver (Touch)
     lv_indev_drv_init(&indev_drv);
     indev_drv.type = LV_INDEV_TYPE_POINTER;
@@ -506,8 +465,7 @@ void app_main(void)
     indev_drv.user_data = tp;
 
     lv_indev_drv_register(&indev_drv);
-#endif
-#endif
+
     lvgl_mux = xSemaphoreCreateRecursiveMutex();
     assert(lvgl_mux);
     ESP_LOGI(TAG, "Create LVGL task");
