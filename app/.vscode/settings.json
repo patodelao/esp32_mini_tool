@@ -1,0 +1,15 @@
+{
+    "idf.flashType": "UART",
+    "idf.portWin": "COM8",
+    "idf.customExtraVars": {
+        "IDF_TARGET": "esp32s3"
+    },
+    "idf.openOcdConfigs": [
+        "interface/ftdi/esp32_devkitj_v1.cfg",
+        "target/esp32s3.cfg"
+    ],
+    "files.associations": {
+        "esp_lcd_touch_cst816s.h": "c",
+        "esp_lcd_touch.h": "c"
+    }
+}
