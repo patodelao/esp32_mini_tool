@@ -26,9 +26,9 @@
 #include "freertos/event_groups.h"
 #include "driver/uart.h"
 
-#include "esp_wifi.h"
-#include "esp_event.h"
-#include "nvs_flash.h"
+#include <time.h>
+#include <sys/time.h>
+
 
 #include "esp_lcd_gc9a01.h"
 #include "esp_lcd_touch_cst816s.h"
@@ -82,7 +82,7 @@ static const char *TAG = "example";
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_SSID "invitado"
 #define WIFI_PASS "111111111111111"
-
+static bool sntp_initialized = false;
 
 static EventGroupHandle_t wifi_event_group;
 static lv_obj_t *wifi_btn;
@@ -90,6 +90,7 @@ static bool wifi_connected = false;
 
 static SemaphoreHandle_t lvgl_mux = NULL;
 
+static lv_obj_t *clock_label;
 
 esp_lcd_touch_handle_t tp = NULL;
 static SemaphoreHandle_t touch_mux = NULL;
@@ -509,12 +510,60 @@ void wifi_init(void)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
 }
+void initialize_sntp()
+{
+    if (sntp_initialized) return;
+
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, "pool.ntp.org");
+    sntp_init();
+    sntp_initialized = true;
+}
+
+void sntp_sync_task(void *arg)
+{
+    time_t now;
+    struct tm timeinfo;
+    int retry = 0;
+    const int retry_count = 10;
+
+    do {
+        time(&now);
+        localtime_r(&now, &timeinfo);
+        if (timeinfo.tm_year >= (2020 - 1900)) {
+            ESP_LOGI("SNTP", "Hora sincronizada: %s", asctime(&timeinfo));
+            break;
+        }
+        ESP_LOGI("SNTP", "Esperando sincronización SNTP... (%d/%d)", retry + 1, retry_count);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    } while (++retry < retry_count);
+
+    if (retry == retry_count) {
+        ESP_LOGW("SNTP", "No se logró sincronizar la hora");
+    }
+
+    vTaskDelete(NULL);
+}
+
 
 void connect_to_wifi(void)
 {
     ESP_LOGI("WIFI", "Conectando a red Wi-Fi...");
     ESP_ERROR_CHECK(esp_wifi_connect());
+
+    // Configura zona horaria de Santiago de Chile
+
+
+    // Iniciar SNTP
+    initialize_sntp();
+    setenv("TZ", "CLT4CLST,M9.1.6/23,M4.1.6/23", 1);
+    //setenv("TZ", "CLT4CLST,m10.1.0/0,m4.1.0/0", 1);
+    tzset();
+    // Crear tarea para esperar sincronización sin bloquear
+    xTaskCreate(sntp_sync_task, "sntp_sync_task", 4096, NULL, 3, NULL);
 }
+
+
 
 void disconnect_wifi(void)
 {
@@ -530,12 +579,58 @@ void disconnect_wifi(void)
 
 
 
+//////////////////// reloj /////////////////
+
+void create_clock_label()
+{
+    clock_label = lv_label_create(lv_scr_act());
+    lv_label_set_text(clock_label, ""); // Mostrar vacío inicialmente
+    lv_obj_align(clock_label, LV_ALIGN_TOP_MID, 0, 5); // Arriba al centro, con 10px de margen
+    lv_obj_set_style_text_font(clock_label, &lv_font_montserrat_14, 0); // Fuente legible
+}
+
+
+void clock_task(void *pvParameters)
+{
+    char time_str[64];
+    time_t now;
+    struct tm timeinfo;
+
+    while (1) {
+        time(&now);
+        localtime_r(&now, &timeinfo);
+
+        strftime(time_str, sizeof(time_str), "%H:%M:%S", &timeinfo);
+        if (clock_label) {
+            lv_label_set_text(clock_label, time_str);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
 
 
 
+void wait_for_time_sync()
+{
+    time_t now = 0;
+    struct tm timeinfo = { 0 };
+    int retry = 0;
+    const int retry_count = 10;
 
+    while (timeinfo.tm_year < (2020 - 1900) && ++retry < retry_count) {
+        ESP_LOGI("SNTP", "Esperando sincronización de hora...");
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        time(&now);
+        localtime_r(&now, &timeinfo);
+    }
 
-
+    if (timeinfo.tm_year >= (2020 - 1900)) {
+        ESP_LOGI("SNTP", "Hora sincronizada correctamente");
+    } else {
+        ESP_LOGE("SNTP", "Fallo en sincronización NTP");
+    }
+}
 
 
 
@@ -700,6 +795,10 @@ void app_main(void){
     ESP_LOGI(TAG, "Create LVGL task");
     xTaskCreate(example_lvgl_port_task, "LVGL", EXAMPLE_LVGL_TASK_STACK_SIZE, NULL, EXAMPLE_LVGL_TASK_PRIORITY, NULL);
 
+    // ------------------------- Tarea de reloj -------------------------
+    //create_clock_label();
+    xTaskCreate(clock_task, "clock_task", 4096, NULL, 4, NULL);
+
 
     // ------------------------- Tarea de estado de wifi -------------------------
     xTaskCreate(wifi_status_task, "wifi_status_task", 2048, NULL, 5, NULL);
@@ -708,6 +807,7 @@ void app_main(void){
     ESP_LOGI(TAG, "Display LVGL Meter Widget");
     if (example_lvgl_lock(-1)) {
         create_gradient_square(); // o create_gradient_circle();
+        create_clock_label();
         example_lvgl_unlock();
     }
 }
