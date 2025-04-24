@@ -29,9 +29,8 @@
      lv_obj_set_style_border_width(circle, 0, 0); // sin borde
  }
  
- #include "lvgl.h"
 
-void create_gradient_square(void) {
+/*void create_gradient_square(void) {
     // Crear un objeto base
     lv_obj_t * square = lv_obj_create(lv_scr_act());
 
@@ -51,12 +50,23 @@ void create_gradient_square(void) {
 
     // Borde opcional
     lv_obj_set_style_border_width(square, 0, 0); // Sin borde
+
+    // Crear un botón en el centro de la pantalla
+    lv_obj_t *btn = lv_btn_create(lv_scr_act());
+    lv_obj_center(btn);
+    lv_obj_add_event_cb(btn, send_ok_event_cb, LV_EVENT_CLICKED, NULL);
+
+    // Etiqueta dentro del botón
+    lv_obj_t *label = lv_label_create(btn);
+    lv_label_set_text(label, "Enviar OK");
+    lv_obj_center(label);
+
 }
 
 
 
 
 
-
+*/
 
 

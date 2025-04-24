@@ -24,7 +24,7 @@
 #include "esp_wifi.h"
 #include "nvs_flash.h"
 #include "freertos/event_groups.h"
-
+#include "driver/uart.h"
 
 
 
@@ -284,7 +284,59 @@ esp_err_t cst816s_init() {
 
 
 
+void uart_init(){
+    const uart_config_t uart_config = {
+        .baud_rate = 115200,
+        .data_bits = UART_DATA_8_BITS,
+        .parity    = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
+    };
+    uart_driver_install(UART_NUM_0, 1024, 0, 0, NULL, 0);
+    uart_param_config(UART_NUM_0, &uart_config);
+    uart_set_pin(UART_NUM_0, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+}
 
+static void send_ok_event_cb(lv_event_t *e)
+{
+    const char *msg = "OK\n";
+    uart_write_bytes(UART_NUM_0, msg, strlen(msg));
+}
+
+
+
+void create_gradient_square(void) {
+    // Crear un objeto base
+    lv_obj_t * square = lv_obj_create(lv_scr_act());
+
+    // Tamaño del cuadrado
+    int size = 240;
+    
+    lv_obj_set_size(square, size, size);
+    lv_obj_align(square, LV_ALIGN_CENTER, 0, 0);
+    // Estilo del fondo: gradiente lineal
+    lv_obj_set_style_radius(square, 0, 0);  // Sin bordes redondeados, forma cuadrada
+    lv_obj_set_style_bg_opa(square, LV_OPA_COVER, 0);
+
+    // Gradiente (similar al círculo)
+    lv_obj_set_style_bg_color(square, lv_color_hex(0x00CFFF), 0); // Color inicial
+    lv_obj_set_style_bg_grad_color(square, lv_color_hex(0x004E92), 0); // Color final
+    lv_obj_set_style_bg_grad_dir(square, LV_GRAD_DIR_VER, 0);  // Dirección vertical
+
+    // Borde opcional
+    lv_obj_set_style_border_width(square, 0, 0); // Sin borde
+
+    // Crear un botón en el centro de la pantalla
+    lv_obj_t *btn = lv_btn_create(lv_scr_act());
+    lv_obj_center(btn);
+    lv_obj_add_event_cb(btn, send_ok_event_cb, LV_EVENT_CLICKED, NULL);
+
+    // Etiqueta dentro del botón
+    lv_obj_t *label = lv_label_create(btn);
+    lv_label_set_text(label, "Enviar OK");
+    lv_obj_center(label);
+
+}
 
 
 
@@ -510,6 +562,8 @@ void app_main(void)
 
     // ------------------------- Inicialización I2C -------------------------
     i2c_init();
+    // ---------------------------- Inicialización UART ---------------------
+    uart_init();
 
     // ------------------------- Inicialización del panel táctil CST816S -------------------------
     esp_err_t err = cst816s_init();
