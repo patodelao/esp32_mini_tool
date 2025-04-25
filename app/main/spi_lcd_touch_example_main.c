@@ -377,22 +377,27 @@ void create_main_ui(void) {
     // Crear header (por ejemplo, 30px de alto)
     lv_obj_t * header = lv_obj_create(main_container);
     lv_obj_set_size(header, 240, 30);
-    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, -25);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x003B5C), 0);
     lv_obj_set_style_text_color(header, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_border_color(header, lv_color_black(), 0);     // Cambiar el color del borde
+    lv_obj_set_style_border_width(header, 2, 0); // Cambiar el grosor del borde si es necesario
 
-    // Crear la etiqueta del reloj (persistente)
+
+    //clock_label = lv_label_create(lv_scr_act());
     clock_label = lv_label_create(header);
-    lv_label_set_text(clock_label, "");
-    lv_obj_align(clock_label, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_text_font(clock_label, &lv_font_montserrat_14, 0);
+    //lv_obj_set_size(clock_label, 240, 30); // Ajustar tamaño al header
+    lv_label_set_text(clock_label, ""); // Mostrar vacío inicialmente
+    lv_obj_align(clock_label, LV_ALIGN_CENTER, 0, 5);
+    lv_obj_set_style_text_font(clock_label, &lv_font_montserrat_14, 0); // Fuente legible
+    lv_obj_set_style_text_color(clock_label, lv_color_white(), 0);
 
     // Contenedor para las pantallas desplazables debajo del header
     lv_obj_t * screen_area = lv_obj_create(main_container);
     lv_obj_set_size(screen_area, 240, 210); // 240 - 30 (header)
-    lv_obj_align(screen_area, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_align(screen_area, LV_ALIGN_BOTTOM_MID, 0, 10);
     lv_obj_set_style_bg_opa(screen_area, LV_OPA_TRANSP, 0);
     lv_obj_set_scroll_snap_x(screen_area, LV_SCROLL_SNAP_CENTER);
     lv_obj_set_scroll_snap_y(screen_area, LV_SCROLL_SNAP_CENTER);
@@ -570,7 +575,7 @@ void sntp_sync_task(void *arg)
             break;
         }
         ESP_LOGI("SNTP", "Esperando sincronización SNTP... (%d/%d)", retry + 1, retry_count);
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     } while (++retry < retry_count);
 
     if (retry == retry_count) {
@@ -842,7 +847,7 @@ void app_main(void){
     ESP_LOGI(TAG, "Display LVGL Meter Widget");
     if (example_lvgl_lock(-1)) {
         create_main_ui(); // o create_gradient_circle();
-        create_clock_label();
+        //create_clock_label();
         example_lvgl_unlock();
     }
 }
