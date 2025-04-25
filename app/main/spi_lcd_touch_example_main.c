@@ -324,7 +324,9 @@ static void update_wifi_button_style()
 {
     lv_obj_set_style_bg_color(wifi_btn, wifi_connected ? lv_color_hex(0x00FF00) : lv_color_hex(0xFF0000), 0);
     lv_obj_set_style_radius(wifi_btn, LV_RADIUS_CIRCLE, 0);
-    lv_label_set_text(lv_obj_get_child(wifi_btn, 0), wifi_connected ? "Conectado" : "Desconectado");
+    //lv_label_set_text(lv_obj_get_child(wifi_btn, 0), wifi_connected ? "Conectado" : "Desconectado");
+    lv_label_set_text(lv_obj_get_child(wifi_btn, 0), wifi_connected ? LV_SYMBOL_WIFI : ".");
+
 }
 
 
@@ -360,17 +362,20 @@ static void wifi_toggle_btn_cb(lv_event_t *e)
 }
 
 
-////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////// interfaz //////////////////////////////////////////////////
 
-
+/*
 void create_main_ui(void) {
     // Crear contenedor base para toda la interfaz
     lv_obj_t * main_container = lv_obj_create(lv_scr_act());
     lv_obj_set_size(main_container, 240, 240);
-    lv_obj_center(main_container);
+    lv_obj_align(main_container, LV_ALIGN_CENTER, 0, 0);
+    //lv_obj_center(main_container);
     lv_obj_set_scrollbar_mode(main_container, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_bg_color(main_container, lv_color_hex(0x00CFFF), 0);
     lv_obj_set_style_bg_grad_color(main_container, lv_color_hex(0x004E92), 0);
+    lv_obj_set_style_border_color(main_container, lv_color_black(), 0); // Cambiar el color del borde
+    lv_obj_set_style_border_width(main_container, 0, 0); // Cambiar el grosor del borde si es necesario
     lv_obj_set_style_bg_grad_dir(main_container, LV_GRAD_DIR_VER, 0);
     lv_obj_clear_flag(main_container, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -383,7 +388,7 @@ void create_main_ui(void) {
     lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_border_color(header, lv_color_black(), 0);     // Cambiar el color del borde
-    lv_obj_set_style_border_width(header, 2, 0); // Cambiar el grosor del borde si es necesario
+    lv_obj_set_style_border_width(header, 0, 0); // Cambiar el grosor del borde si es necesario
 
 
     //clock_label = lv_label_create(lv_scr_act());
@@ -396,8 +401,10 @@ void create_main_ui(void) {
 
     // Contenedor para las pantallas desplazables debajo del header
     lv_obj_t * screen_area = lv_obj_create(main_container);
-    lv_obj_set_size(screen_area, 240, 210); // 240 - 30 (header)
-    lv_obj_align(screen_area, LV_ALIGN_BOTTOM_MID, 0, 10);
+    lv_obj_set_size(screen_area, 240, 230); // 240 - 30 (header)
+    //lv_obj_align(screen_area, LV_ALIGN_BOTTOM_MID, 0, 10);
+    lv_obj_align(screen_area, LV_ALIGN_BOTTOM_MID, 0, 20);
+
     lv_obj_set_style_bg_opa(screen_area, LV_OPA_TRANSP, 0);
     lv_obj_set_scroll_snap_x(screen_area, LV_SCROLL_SNAP_CENTER);
     lv_obj_set_scroll_snap_y(screen_area, LV_SCROLL_SNAP_CENTER);
@@ -406,38 +413,149 @@ void create_main_ui(void) {
 
     // Crear 4 pantallas de ejemplo (arriba, abajo, izquierda, derecha)
     lv_obj_t * screen1 = lv_obj_create(screen_area);
-    lv_obj_set_size(screen1, 240, 210);
+    lv_obj_set_size(screen1, 120, 120);
     lv_obj_align(screen1, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(screen1, lv_palette_lighten(LV_PALETTE_GREEN, 2), 0);
+    lv_obj_set_style_bg_color(screen1, lv_palette_lighten(LV_PALETTE_GREEN, 2), 0); //
 
     lv_obj_t * screen2 = lv_obj_create(screen_area);
-    lv_obj_set_size(screen2, 240, 210);
-    lv_obj_align(screen2, LV_ALIGN_OUT_RIGHT_MID, 240, 0); // derecha
+    lv_obj_set_size(screen2, 120, 120);
+    lv_obj_align(screen2, LV_ALIGN_OUT_RIGHT_MID, -40, 0); // derecha
     lv_obj_set_style_bg_color(screen2, lv_palette_lighten(LV_PALETTE_RED, 2), 0);
 
     lv_obj_t * screen3 = lv_obj_create(screen_area);
-    lv_obj_set_size(screen3, 240, 210);
+    lv_obj_set_size(screen3, 120, 120);
     lv_obj_align(screen3, LV_ALIGN_OUT_LEFT_MID, -240, 0); // izquierda
     lv_obj_set_style_bg_color(screen3, lv_palette_lighten(LV_PALETTE_BLUE, 2), 0);
 
     lv_obj_t * screen4 = lv_obj_create(screen_area);
-    lv_obj_set_size(screen4, 240, 210);
+    lv_obj_set_size(screen4, 120, 120);
     lv_obj_align(screen4, LV_ALIGN_OUT_BOTTOM_MID, 0, 210); // abajo
     lv_obj_set_style_bg_color(screen4, lv_palette_lighten(LV_PALETTE_YELLOW, 2), 0);
+
+    //Crear screen 5,6,7,8,9
+    lv_obj_t * screen5 = lv_obj_create(screen_area);
+    lv_obj_set_size(screen5, 120, 120);
+    lv_obj_align(screen5, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 210); // abajo izquierda
+    lv_obj_set_style_bg_color(screen5, lv_palette_lighten(LV_PALETTE_ORANGE, 2), 0);
+
+    lv_obj_t * screen6 = lv_obj_create(screen_area);
+    lv_obj_set_size(screen6, 120, 120);
+    lv_obj_align(screen6, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 210); // abajo derecha
+    lv_obj_set_style_bg_color(screen6, lv_palette_lighten(LV_PALETTE_PURPLE, 2), 0);
+
+    lv_obj_t * screen7 = lv_obj_create(screen_area);
+    lv_obj_set_size(screen7, 120, 120);
+    lv_obj_align(screen7, LV_ALIGN_TOP_LEFT, 0, -210); // arriba izquierda
+    lv_obj_set_style_bg_color(screen7, lv_palette_lighten(LV_PALETTE_CYAN, 2), 0);
+
+    lv_obj_t * screen8 = lv_obj_create(screen_area);
+    lv_obj_set_size(screen8, 120, 120);
+    lv_obj_align(screen8, LV_ALIGN_TOP_RIGHT, 0, -210); // arriba derecha
+    lv_obj_set_style_bg_color(screen8, lv_palette_lighten(LV_PALETTE_PINK, 2), 0);
+
+    lv_obj_t * screen9 = lv_obj_create(screen_area);
+    lv_obj_set_size(screen9, 120, 120);
+    lv_obj_align(screen9, LV_ALIGN_OUT_TOP_MID, 0, -210); // arriba centro
+    lv_obj_set_style_bg_color(screen9, lv_palette_lighten(LV_PALETTE_BROWN, 2), 0);
+
+    
+
 
     // Puedes agregar botones u otros elementos en estas pantallas
     wifi_btn = lv_btn_create(screen1);
     lv_obj_center(wifi_btn);
     lv_obj_add_event_cb(wifi_btn, wifi_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_set_size(wifi_btn, 120, 50);
+    lv_obj_set_size(wifi_btn, 30, 30);
 
     lv_obj_t * label = lv_label_create(wifi_btn);
-    lv_label_set_text(label, "Desconectado");
+    lv_label_set_text(label, ".");
     lv_obj_center(label);
 
     update_wifi_button_style();
 }
 
+*/
+void create_main_ui(void) {
+    lv_obj_t * main_container = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(main_container, 240, 240);
+    lv_obj_align(main_container, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_scrollbar_mode(main_container, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_color(main_container, lv_color_hex(0x00CFFF), 0);
+    lv_obj_set_style_bg_grad_color(main_container, lv_color_hex(0x004E92), 0);
+    lv_obj_set_style_border_width(main_container, 0, 0);
+    lv_obj_set_style_bg_grad_dir(main_container, LV_GRAD_DIR_VER, 0);
+    lv_obj_clear_flag(main_container, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Header
+    lv_obj_t * header = lv_obj_create(main_container);
+    lv_obj_set_size(header, 240, 30);
+    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, -25);
+    lv_obj_set_style_bg_color(header, lv_color_hex(0x003B5C), 0);
+    lv_obj_set_style_text_color(header, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_border_width(header, 0, 0);
+
+    clock_label = lv_label_create(header);
+    lv_label_set_text(clock_label, "");
+    lv_obj_align(clock_label, LV_ALIGN_CENTER, 0, 5);
+    lv_obj_set_style_text_font(clock_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(clock_label, lv_color_white(), 0);
+
+    // Zona de screens horizontales scrolleables
+    lv_obj_t * screen_area = lv_obj_create(main_container);
+    lv_obj_set_size(screen_area, 240, 180); // Resto del espacio después del header
+    lv_obj_align(screen_area, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_scroll_dir(screen_area, LV_DIR_HOR);
+    //lv_obj_clear_flag(screen_area, LV_OBJ_FLAG_SCROLLABLE); // Desactivar scroll vertical
+    //lv_obj_set_scroll_snap_x(screen_area, LV_SCROLL_SNAP_CENTER);
+    lv_obj_set_scrollbar_mode(screen_area, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_opa(screen_area, LV_OPA_TRANSP, 0);
+
+    // Contenedor lineal horizontal para las 9 pantallas
+    lv_obj_t * screen_row = lv_obj_create(screen_area);
+    lv_obj_set_size(screen_row, 9 * 130, 130); // espacio entre pantallas incluido
+    //lv_obj_center(screen_row);
+    lv_obj_align(screen_row, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_layout(screen_row, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(screen_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(screen_row, 10, 0); // Espacio entre pantallas
+    lv_obj_set_style_pad_left(screen_row, 10, 0); // Margen inicial
+    lv_obj_set_style_pad_right(screen_row, 10, 0);
+    lv_obj_set_style_bg_opa(screen_row, LV_OPA_TRANSP, 0);
+
+    // Crear 9 pantallas
+    lv_obj_t * screens[9];
+    lv_color_t colors[9] = {
+        lv_palette_lighten(LV_PALETTE_GREEN, 2),
+        lv_palette_lighten(LV_PALETTE_RED, 2),
+        lv_palette_lighten(LV_PALETTE_BLUE, 2),
+        lv_palette_lighten(LV_PALETTE_YELLOW, 2),
+        lv_palette_lighten(LV_PALETTE_ORANGE, 2),
+        lv_palette_lighten(LV_PALETTE_PURPLE, 2),
+        lv_palette_lighten(LV_PALETTE_CYAN, 2),
+        lv_palette_lighten(LV_PALETTE_PINK, 2),
+        lv_palette_lighten(LV_PALETTE_BROWN, 2)
+    };
+
+    for (int i = 0; i < 9; i++) {
+        screens[i] = lv_obj_create(screen_row);
+        lv_obj_set_size(screens[i], 100, 100);
+        lv_obj_set_style_bg_color(screens[i], colors[i], 0);
+    }
+
+    // Ejemplo: agregar botón a la primera pantalla
+    wifi_btn = lv_btn_create(screens[0]);
+    lv_obj_center(wifi_btn);
+    lv_obj_add_event_cb(wifi_btn, wifi_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_size(wifi_btn, 30, 30);
+
+    lv_obj_t * label = lv_label_create(wifi_btn);
+    lv_label_set_text(label, ".");
+    lv_obj_center(label);
+
+    update_wifi_button_style();
+}
 
 
 
@@ -460,56 +578,6 @@ xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
 }
 }
 
-/*
-void connect_to_wifi(void)
-{
-    wifi_event_group = xEventGroupCreate();
-
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-    esp_event_handler_instance_t instance_any_id;
-    esp_event_handler_instance_t instance_got_ip;
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
-                                                        ESP_EVENT_ANY_ID,
-                                                        &wifi_event_handler,
-                                                        NULL,
-                                                        &instance_any_id));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
-                                                        IP_EVENT_STA_GOT_IP,
-                                                        &wifi_event_handler,
-                                                        NULL,
-                                                        &instance_got_ip));
-
-    wifi_config_t wifi_config = {
-        .sta = {
-            .ssid = WIFI_SSID,
-            .password = WIFI_PASS,
-        },
-    };
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    // Esperar a que se conecte
-    ESP_LOGI("WIFI", "Conectando a %s...", WIFI_SSID);
-    EventBits_t bits = xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT,
-                                           pdFALSE, pdTRUE, portMAX_DELAY);
-
-    if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI("WIFI", "Conectado a %s", WIFI_SSID);
-        printf("Conectado a %s\n", WIFI_SSID);
-    } else {
-        ESP_LOGE("WIFI", "Error al conectar a %s", WIFI_SSID);
-        printf("Error al conectar a %s\n", WIFI_SSID);
-    }
-}
-*/
 
 void wifi_status_task(void *pvParameters)
 {
@@ -621,13 +689,7 @@ void disconnect_wifi(void)
 
 //////////////////// reloj /////////////////
 
-void create_clock_label()
-{
-    clock_label = lv_label_create(lv_scr_act());
-    lv_label_set_text(clock_label, ""); // Mostrar vacío inicialmente
-    lv_obj_align(clock_label, LV_ALIGN_TOP_MID, 0, 5); // Arriba al centro, con 10px de margen
-    lv_obj_set_style_text_font(clock_label, &lv_font_montserrat_14, 0); // Fuente legible
-}
+
 
 
 void clock_task(void *pvParameters)
@@ -659,7 +721,8 @@ void wait_for_time_sync()
     const int retry_count = 10;
 
     while (timeinfo.tm_year < (2020 - 1900) && ++retry < retry_count) {
-        ESP_LOGI("SNTP", "Esperando sincronización de hora...");
+        //ESP_LOGI("SNTP", "Esperando sincronización de hora...");
+        printf("Esperando sincronización de hora...\n");
         vTaskDelay(pdMS_TO_TICKS(2000));
         time(&now);
         localtime_r(&now, &timeinfo);
