@@ -98,7 +98,7 @@ static SemaphoreHandle_t touch_mux = NULL;
 void connect_to_wifi(void);
 
 extern void create_gradient_circle();
-extern void create_gradient_square();
+extern void create_main_ui();
 
 static bool example_notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
 {
@@ -363,41 +363,76 @@ static void wifi_toggle_btn_cb(lv_event_t *e)
 ////////////////////////////////////////////////////////////////////////////////////
 
 
-void create_gradient_square(void) {
-    // Crear un objeto base
-    lv_obj_t * square = lv_obj_create(lv_scr_act());
+void create_main_ui(void) {
+    // Crear contenedor base para toda la interfaz
+    lv_obj_t * main_container = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(main_container, 240, 240);
+    lv_obj_center(main_container);
+    lv_obj_set_scrollbar_mode(main_container, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_color(main_container, lv_color_hex(0x00CFFF), 0);
+    lv_obj_set_style_bg_grad_color(main_container, lv_color_hex(0x004E92), 0);
+    lv_obj_set_style_bg_grad_dir(main_container, LV_GRAD_DIR_VER, 0);
+    lv_obj_clear_flag(main_container, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Tamaño del cuadrado
-    int size = 240;
-    
-    lv_obj_set_size(square, size, size);
-    lv_obj_align(square, LV_ALIGN_CENTER, 0, 0);
-    // Estilo del fondo: gradiente lineal
-    lv_obj_set_style_radius(square, 0, 0);  // Sin bordes redondeados, forma cuadrada
-    lv_obj_set_style_bg_opa(square, LV_OPA_COVER, 0);
+    // Crear header (por ejemplo, 30px de alto)
+    lv_obj_t * header = lv_obj_create(main_container);
+    lv_obj_set_size(header, 240, 30);
+    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(header, lv_color_hex(0x003B5C), 0);
+    lv_obj_set_style_text_color(header, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Gradiente (similar al círculo)
-    lv_obj_set_style_bg_color(square, lv_color_hex(0x00CFFF), 0); // Color inicial
-    lv_obj_set_style_bg_grad_color(square, lv_color_hex(0x004E92), 0); // Color final
-    lv_obj_set_style_bg_grad_dir(square, LV_GRAD_DIR_VER, 0);  // Dirección vertical
+    // Crear la etiqueta del reloj (persistente)
+    clock_label = lv_label_create(header);
+    lv_label_set_text(clock_label, "");
+    lv_obj_align(clock_label, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_font(clock_label, &lv_font_montserrat_14, 0);
 
-    // Borde opcional
-    lv_obj_set_style_border_width(square, 0, 0); // Sin borde
+    // Contenedor para las pantallas desplazables debajo del header
+    lv_obj_t * screen_area = lv_obj_create(main_container);
+    lv_obj_set_size(screen_area, 240, 210); // 240 - 30 (header)
+    lv_obj_align(screen_area, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_opa(screen_area, LV_OPA_TRANSP, 0);
+    lv_obj_set_scroll_snap_x(screen_area, LV_SCROLL_SNAP_CENTER);
+    lv_obj_set_scroll_snap_y(screen_area, LV_SCROLL_SNAP_CENTER);
+    lv_obj_set_scroll_dir(screen_area, LV_DIR_ALL);
+    lv_obj_set_scrollbar_mode(screen_area, LV_SCROLLBAR_MODE_OFF);
 
-    // Crear un botón en el centro de la pantalla
-    wifi_btn = lv_btn_create(lv_scr_act());
+    // Crear 4 pantallas de ejemplo (arriba, abajo, izquierda, derecha)
+    lv_obj_t * screen1 = lv_obj_create(screen_area);
+    lv_obj_set_size(screen1, 240, 210);
+    lv_obj_align(screen1, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(screen1, lv_palette_lighten(LV_PALETTE_GREEN, 2), 0);
+
+    lv_obj_t * screen2 = lv_obj_create(screen_area);
+    lv_obj_set_size(screen2, 240, 210);
+    lv_obj_align(screen2, LV_ALIGN_OUT_RIGHT_MID, 240, 0); // derecha
+    lv_obj_set_style_bg_color(screen2, lv_palette_lighten(LV_PALETTE_RED, 2), 0);
+
+    lv_obj_t * screen3 = lv_obj_create(screen_area);
+    lv_obj_set_size(screen3, 240, 210);
+    lv_obj_align(screen3, LV_ALIGN_OUT_LEFT_MID, -240, 0); // izquierda
+    lv_obj_set_style_bg_color(screen3, lv_palette_lighten(LV_PALETTE_BLUE, 2), 0);
+
+    lv_obj_t * screen4 = lv_obj_create(screen_area);
+    lv_obj_set_size(screen4, 240, 210);
+    lv_obj_align(screen4, LV_ALIGN_OUT_BOTTOM_MID, 0, 210); // abajo
+    lv_obj_set_style_bg_color(screen4, lv_palette_lighten(LV_PALETTE_YELLOW, 2), 0);
+
+    // Puedes agregar botones u otros elementos en estas pantallas
+    wifi_btn = lv_btn_create(screen1);
     lv_obj_center(wifi_btn);
     lv_obj_add_event_cb(wifi_btn, wifi_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_set_size(wifi_btn, 120, 50);
 
-    // Crear etiqueta dentro del botón
-    lv_obj_t *label = lv_label_create(wifi_btn);
+    lv_obj_t * label = lv_label_create(wifi_btn);
     lv_label_set_text(label, "Desconectado");
     lv_obj_center(label);
 
     update_wifi_button_style();
-
 }
+
 
 
 
@@ -806,7 +841,7 @@ void app_main(void){
     // ------------------------- Mostrar interfaz LVGL inicial -------------------------
     ESP_LOGI(TAG, "Display LVGL Meter Widget");
     if (example_lvgl_lock(-1)) {
-        create_gradient_square(); // o create_gradient_circle();
+        create_main_ui(); // o create_gradient_circle();
         create_clock_label();
         example_lvgl_unlock();
     }

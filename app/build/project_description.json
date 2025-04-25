@@ -1,7 +1,7 @@
 {
     "version":            "1.1",
     "project_name":       "spi_lcd_touch",
-    "project_version":    "af12827-dirty",
+    "project_version":    "11bfbf2-dirty",
     "project_path":       "C:/Users/patricio.delao/Documents/ESP32 mini/esp32_mini_tool/app",
     "idf_path":           "C:/Users/patricio.delao/esp/v5.3.2/esp-idf",
     "build_dir":          "C:/Users/patricio.delao/Documents/ESP32 mini/esp32_mini_tool/app/build",
