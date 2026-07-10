@@ -134,6 +134,7 @@ static void gyro_close(void)
 const tool_t tool_gyro = {
     .name = "Giro",
     .icon = LV_SYMBOL_REFRESH,
+    .accent = 0x4AD9D9,
     .open = gyro_open,
     .close = gyro_close,
 };

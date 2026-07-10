@@ -137,6 +137,7 @@ static void level_close(void)
 const tool_t tool_level = {
     .name = "Nivel",
     .icon = LV_SYMBOL_GPS,
+    .accent = 0x35D07F,
     .open = level_open,
     .close = level_close,
 };

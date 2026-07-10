@@ -446,6 +446,7 @@ static void clock_close(void)
 const tool_t tool_clock = {
     .name = "Reloj",
     .icon = LV_SYMBOL_BELL,
+    .accent = 0xFFB340,
     .open = clock_open,
     .close = clock_close,
 };

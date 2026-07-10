@@ -134,6 +134,7 @@ static void wifi_close(void)
 const tool_t tool_wifi = {
     .name = "WiFi",
     .icon = LV_SYMBOL_WIFI,
+    .accent = 0x4AA8FF,
     .open = wifi_open,
     .close = wifi_close,
 };

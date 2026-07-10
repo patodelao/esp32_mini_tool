@@ -133,6 +133,7 @@ static void wifiscan_close(void)
 const tool_t tool_wifiscan = {
     .name = "Scan",
     .icon = LV_SYMBOL_EYE_OPEN,
+    .accent = 0x2ED9A3,
     .open = wifiscan_open,
     .close = wifiscan_close,
 };

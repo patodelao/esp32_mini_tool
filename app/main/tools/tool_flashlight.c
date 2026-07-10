@@ -59,6 +59,7 @@ static void flashlight_close(void)
 const tool_t tool_flashlight = {
     .name = "Luz",
     .icon = LV_SYMBOL_CHARGE,
+    .accent = 0xFFE05A,
     .open = flashlight_open,
     .close = flashlight_close,
 };

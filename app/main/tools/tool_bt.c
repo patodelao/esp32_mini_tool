@@ -119,6 +119,7 @@ static void bt_close(void)
 const tool_t tool_bt = {
     .name = "BT",
     .icon = LV_SYMBOL_BLUETOOTH,
+    .accent = 0x3E7BFF,
     .open = bt_open,
     .close = bt_close,
 };

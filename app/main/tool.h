@@ -16,6 +16,7 @@ extern "C" {
 typedef struct {
     const char *name;                 /* Nombre visible en el menú */
     const char *icon;                 /* Símbolo LVGL (LV_SYMBOL_*) */
+    uint32_t accent;                  /* Color de acento 0xRRGGBB (0 = default) */
     void (*open)(lv_obj_t *parent);   /* Construye la UI dentro de 'parent' */
     void (*close)(void);              /* Libera timers/recursos (puede ser NULL) */
 } tool_t;

@@ -95,6 +95,7 @@ static void netinfo_close(void)
 const tool_t tool_netinfo = {
     .name = "Red",
     .icon = LV_SYMBOL_LIST,
+    .accent = 0x8FA8C8,
     .open = netinfo_open,
     .close = netinfo_close,
 };
