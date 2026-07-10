@@ -7,6 +7,6 @@ dependencies.lock
 sdkconfig
 sdkconfig.old
 
-# Editor
-.vscode/settings.json
+# Editor (rutas locales de la máquina)
+**/.vscode/settings.json
 *.swp
