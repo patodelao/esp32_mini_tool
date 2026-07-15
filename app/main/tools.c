@@ -14,6 +14,8 @@ extern const tool_t tool_wifi;
 extern const tool_t tool_wifiscan;
 extern const tool_t tool_netinfo;
 extern const tool_t tool_bt;
+extern const tool_t tool_gym;
+
 
 const tool_t *const g_tools[] = {
     &tool_clock,
@@ -25,6 +27,7 @@ const tool_t *const g_tools[] = {
     &tool_wifiscan,
     &tool_netinfo,
     &tool_bt,
+    &tool_gym,
 };
 
 const int g_tools_count = (int)(sizeof(g_tools) / sizeof(g_tools[0]));

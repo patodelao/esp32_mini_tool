@@ -16,4 +16,5 @@ idf_component_register(SRCS "main.c"
                             "tools/tool_flashlight.c"
                             "tools/tool_wifiscan.c"
                             "tools/tool_netinfo.c"
+                            "tools/tool_gym.c"
                        INCLUDE_DIRS ".")
