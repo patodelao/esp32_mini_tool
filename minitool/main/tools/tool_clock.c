@@ -12,7 +12,12 @@
 #include <stdio.h>
 #include <time.h>
 
+#include <sys/time.h>   /* Para settimeofday() y struct timeval */
+#include "nvs_flash.h"  /* Para inicializar la lectura */
+#include "nvs.h"        /* Para nvs_get_i64, nvs_set_i64, etc. */
+
 #include "esp_timer.h"
+
 
 /* ---------------------------------------------------------------- estado */
 
@@ -405,7 +410,30 @@ static void tab_click_cb(lv_event_t *e)
 }
 
 static void clock_open(lv_obj_t *parent)
-{
+{   
+    time_t now;
+    time(&now);
+
+    /* Si el año es menor a 2020, significa que la placa acaba de encender 
+       y no tiene internet. Rescatamos el tiempo del NVS. */
+    if (now < 1600000000) {
+        nvs_handle_t my_handle;
+        if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
+            int64_t saved_time = 0;
+            esp_err_t err = nvs_get_i64(my_handle, "last_clock_time", &saved_time);
+            nvs_close(my_handle);
+
+            if (err == ESP_OK && saved_time > 1600000000) {
+                /* Forzamos el reloj interno del ESP32 a la fecha rescatada */
+                struct timeval tv;
+                tv.tv_sec = (time_t)saved_time;
+                tv.tv_usec = 0;
+                settimeofday(&tv, NULL);
+            }
+        }
+    }
+
+
     /* Contenido (deja libre la franja inferior para las pestañas) */
     s_content = lv_obj_create(parent);
     lv_obj_remove_style_all(s_content);
@@ -441,6 +469,8 @@ static void clock_close(void)
     s_main_label = s_sub_label = s_play_label = NULL;
     s_roller_min = s_roller_sec = NULL;
     for (int i = 0; i < 3; i++) s_tabs[i] = NULL;
+    
+    /* ELIMINAMOS EL GUARDADO EN NVS MANUAL AQUÍ */
 }
 
 const tool_t tool_clock = {

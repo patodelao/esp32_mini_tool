@@ -17,4 +17,10 @@ idf_component_register(SRCS "main.c"
                             "tools/tool_wifiscan.c"
                             "tools/tool_netinfo.c"
                             "tools/tool_gym.c"
-                       INCLUDE_DIRS ".")
+                            "tools/tool_tracker.c"
+                            "tools/tool_dashboard.c"
+                            "tools/tool_weather.c"
+                            "tools/font_weather_28.c"
+                            "tools/font_text_16.c"
+                       INCLUDE_DIRS "."
+                       )

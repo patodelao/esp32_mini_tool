@@ -41,14 +41,23 @@ void wifi_manager_get_ssid(char *buf, size_t len)
     }
 }
 
+
 static void load_credentials(void)
 {
     nvs_handle_t nvs;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) return;
+    
     size_t len = sizeof(s_ssid);
     nvs_get_str(nvs, "ssid", s_ssid, &len);
     len = sizeof(s_pass);
     nvs_get_str(nvs, "pass", s_pass, &len);
+    
+    /* Leemos si la última vez lo dejamos conectado (1) o desconectado (0) */
+    uint8_t auto_conn = 0;
+    if (nvs_get_u8(nvs, "autoconnect", &auto_conn) == ESP_OK) {
+        s_should_connect = (auto_conn == 1);
+    }
+    
     nvs_close(nvs);
 }
 
@@ -61,6 +70,10 @@ static void save_credentials(void)
     }
     nvs_set_str(nvs, "ssid", s_ssid);
     nvs_set_str(nvs, "pass", s_pass);
+    
+    /* Guardamos la intención actual del usuario */
+    nvs_set_u8(nvs, "autoconnect", s_should_connect ? 1 : 0);
+    
     nvs_commit(nvs);
     nvs_close(nvs);
 }
@@ -143,11 +156,20 @@ void wifi_manager_init(void)
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
 
     ESP_ERROR_CHECK(esp_wifi_start());
+    
+    /* Si en la última sesión el usuario lo dejó conectado, reconectar automáticamente */
+    if (s_should_connect) {
+        ESP_LOGI(TAG, "Auto-conectando a red guardada: %s", s_ssid);
+        esp_wifi_connect();
+    }
 }
+
+
 
 void wifi_manager_connect(void)
 {
     s_should_connect = true;
+    save_credentials(); /* Guardar en memoria estática que queremos auto-conectar */
     ESP_LOGI(TAG, "Conectando a '%s'...", s_ssid);
     esp_wifi_connect();
 }
@@ -155,6 +177,7 @@ void wifi_manager_connect(void)
 void wifi_manager_disconnect(void)
 {
     s_should_connect = false;
+    save_credentials(); /* Guardar en memoria estática que NO queremos conectar */
     ESP_LOGI(TAG, "Desconectando...");
     esp_wifi_disconnect();
     s_connected = false;
