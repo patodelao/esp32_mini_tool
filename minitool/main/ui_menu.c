@@ -26,6 +26,7 @@ static const char *TAG = "menu";
 
 static lv_obj_t *s_menu_roller = NULL;
 static lv_obj_t *s_pos_arc = NULL;
+static lv_obj_t *s_nav_zone = NULL;
 static lv_obj_t *s_clock_lbl = NULL;
 static lv_obj_t *s_wifi_icon = NULL;
 static lv_obj_t *s_bt_icon = NULL;
@@ -55,6 +56,7 @@ static void apply_accent(uint16_t selected)
     }
     if (s_pos_arc) {
         lv_obj_set_style_arc_color(s_pos_arc, accent, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(s_pos_arc, accent, LV_PART_KNOB);
         lv_arc_set_value(s_pos_arc, selected);
     }
 }
@@ -132,6 +134,7 @@ static void do_open_tool(int idx)
     lv_obj_clean(lv_scr_act());
     s_menu_roller = NULL;
     s_pos_arc = NULL;
+    s_nav_zone = NULL;
     s_clock_lbl = s_wifi_icon = s_bt_icon = NULL;
     s_current_tool = tool;
 
@@ -174,6 +177,39 @@ static void roller_click_cb(lv_event_t *e)
     if (selected >= (uint16_t)g_tools_count) return;
     s_return_pos = selected;
     do_open_tool((int)selected);
+}
+
+/*
+ * Navegación rápida: tocar/arrastrar sobre la barra inferior salta a esa
+ * posición de la lista (mapea x -> índice). El roller sigue de inmediato.
+ */
+static void nav_scrub_cb(lv_event_t *e)
+{
+    (void)e;
+    if (!s_menu_roller || !s_nav_zone || g_tools_count <= 0) return;
+
+    lv_indev_t *indev = lv_indev_get_act();
+    if (!indev) return;
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+
+    lv_area_t a;
+    lv_obj_get_coords(s_nav_zone, &a);
+    lv_coord_t w = lv_area_get_width(&a);
+    if (w <= 0) return;
+
+    int rel = p.x - a.x1;
+    if (rel < 0) rel = 0;
+    if (rel > w) rel = w;
+
+    int idx = (rel * g_tools_count) / (w + 1);
+    if (idx >= g_tools_count) idx = g_tools_count - 1;
+    if (idx < 0) idx = 0;
+
+    if ((uint16_t)idx != lv_roller_get_selected(s_menu_roller)) {
+        lv_roller_set_selected(s_menu_roller, (uint16_t)idx, LV_ANIM_OFF);
+        apply_accent((uint16_t)idx);
+    }
 }
 
 static void screen_gesture_cb(lv_event_t *e)
@@ -225,17 +261,22 @@ void create_main_menu(void)
     /* Marco decorativo (detrás de todo) */
     create_frame_arc(lv_scr_act());
 
-    /* Arco de posición (segmento inferior), teñido con el acento */
+    /* Arco de posición (segmento inferior), teñido con el acento. Es el
+       indicador visual; la interacción va por una zona táctil aparte. */
     s_pos_arc = lv_arc_create(lv_scr_act());
     lv_obj_set_size(s_pos_arc, 224, 224);
     lv_obj_center(s_pos_arc);
-    lv_arc_set_bg_angles(s_pos_arc, 55, 125);     /* segmento inferior */
+    lv_arc_set_bg_angles(s_pos_arc, 55, 125);          /* segmento inferior */
+    lv_arc_set_mode(s_pos_arc, LV_ARC_MODE_REVERSE);   /* llena de izq->der con el índice */
     lv_arc_set_range(s_pos_arc, 0, (g_tools_count > 1) ? (g_tools_count - 1) : 1);
-    lv_obj_remove_style(s_pos_arc, NULL, LV_PART_KNOB);
     lv_obj_clear_flag(s_pos_arc, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_arc_width(s_pos_arc, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_pos_arc, 5, LV_PART_MAIN);
     lv_obj_set_style_arc_color(s_pos_arc, lv_color_hex(0x142433), LV_PART_MAIN);
-    lv_obj_set_style_arc_width(s_pos_arc, 4, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(s_pos_arc, 5, LV_PART_INDICATOR);
+    /* Perilla pequeña que marca la posición actual */
+    lv_obj_set_style_bg_opa(s_pos_arc, LV_OPA_COVER, LV_PART_KNOB);
+    lv_obj_set_style_radius(s_pos_arc, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(s_pos_arc, 3, LV_PART_KNOB);
 
     /* --- Barra de estado superior: reloj + Wi-Fi/BT --- */
     s_clock_lbl = lv_label_create(lv_scr_act());
@@ -280,6 +321,17 @@ void create_main_menu(void)
     lv_obj_set_style_text_color(s_menu_roller, lv_color_white(), LV_PART_SELECTED);
     lv_obj_set_style_text_align(s_menu_roller, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_menu_roller, LV_TEXT_ALIGN_LEFT, LV_PART_SELECTED);
+
+    /* Zona táctil invisible sobre la barra inferior: navegación rápida.
+       Tocar salta a esa posición; arrastrar hace scrub por la lista. */
+    s_nav_zone = lv_obj_create(lv_scr_act());
+    lv_obj_remove_style_all(s_nav_zone);
+    lv_obj_set_size(s_nav_zone, 180, 48);
+    lv_obj_align(s_nav_zone, LV_ALIGN_BOTTOM_MID, 0, -2);
+    lv_obj_add_flag(s_nav_zone, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_nav_zone, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(s_nav_zone, nav_scrub_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(s_nav_zone, nav_scrub_cb, LV_EVENT_PRESSING, NULL);
 
     /* Volver a la posición desde la que se abrió la última tool (default 0) */
     if (s_return_pos < (uint16_t)g_tools_count) {
