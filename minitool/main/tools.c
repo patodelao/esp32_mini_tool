@@ -19,7 +19,6 @@ extern const tool_t tool_tracker;
 extern const tool_t tool_dashboard;
 extern const tool_t tool_weather;
 extern const tool_t tool_pedometer;
-extern const tool_t tool_menuorder;
 
 const tool_t *const g_tools[] = {
     &tool_clock,
@@ -36,7 +35,6 @@ const tool_t *const g_tools[] = {
     &tool_gym,
     //&tool_tracker,
     &tool_dashboard,
-    &tool_menuorder,
 
 };
 

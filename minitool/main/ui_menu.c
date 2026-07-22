@@ -1,13 +1,20 @@
 /*
- * ui_menu.c — Menú principal giratorio (roller) para pantalla redonda.
+ * ui_menu.c — Menú principal (roller) para pantalla redonda.
+ *
+ * El roller se desplaza libremente (fluido) y la herramienta centrada se abre
+ * con un botón dedicado abajo, evitando aperturas accidentales al hacer scroll.
+ * Arriba hay una barra de estado (reloj + Wi-Fi/BT) y un arco decorativo enmarca
+ * el conjunto para aprovechar los bordes de la pantalla circular.
  */
 #include "ui_menu.h"
 
 #include <stdio.h>
+#include <time.h>
 
 #include "esp_log.h"
 #include "tool.h"
-#include "menu_order.h"
+#include "wifi_manager.h"
+#include "bt_manager.h"
 #include "ui_watchface.h"
 
 static const char *TAG = "menu";
@@ -16,33 +23,37 @@ static const char *TAG = "menu";
 #define MENU_OPTIONS_BUF_SIZE 768
 
 static lv_obj_t *s_menu_roller = NULL;
+static lv_obj_t *s_open_btn = NULL;
+static lv_obj_t *s_open_lbl = NULL;
+static lv_obj_t *s_clock_lbl = NULL;
+static lv_obj_t *s_wifi_icon = NULL;
+static lv_obj_t *s_bt_icon = NULL;
 static const tool_t *s_current_tool = NULL;
 static lv_timer_t *s_idle_timer = NULL;
 static char s_menu_options[MENU_OPTIONS_BUF_SIZE];
-
-/* Índice de tool pendiente de abrir tras el flash táctil (-1 = ninguno) */
-static int s_pending_open = -1;
-static lv_timer_t *s_open_timer = NULL;
 
 /* Posición del menú a restaurar al volver de una tool (default 0 al encender) */
 static uint16_t s_return_pos = 0;
 
 #define ACCENT_DEFAULT 0x2E82C8
 
-/* Acento de la tool en la posición visible 'pos' del menú. */
 static uint32_t pos_accent(int pos)
 {
-    const tool_t *t = menu_order_get(pos);
+    if (pos < 0 || pos >= g_tools_count) return ACCENT_DEFAULT;
+    const tool_t *t = g_tools[pos];
     return (t && t->accent) ? t->accent : ACCENT_DEFAULT;
 }
 
-/* Tiñe el resaltado (pill + texto) con el acento de la tool seleccionada. */
-static void apply_accent(uint16_t selected, lv_opa_t pill_opa)
+/* Tiñe el resaltado del roller y el botón de abrir con el acento de la tool. */
+static void apply_accent(uint16_t selected)
 {
-    if (!s_menu_roller) return;
     lv_color_t accent = lv_color_hex(pos_accent(selected));
-    lv_obj_set_style_bg_color(s_menu_roller, accent, LV_PART_SELECTED);
-    lv_obj_set_style_bg_opa(s_menu_roller, pill_opa, LV_PART_SELECTED);
+    if (s_menu_roller) {
+        lv_obj_set_style_bg_color(s_menu_roller, accent, LV_PART_SELECTED);
+        lv_obj_set_style_bg_opa(s_menu_roller, LV_OPA_30, LV_PART_SELECTED);
+    }
+    if (s_open_btn)  lv_obj_set_style_border_color(s_open_btn, accent, 0);
+    if (s_open_lbl)  lv_obj_set_style_text_color(s_open_lbl, accent, 0);
 }
 
 static void close_current_tool(void)
@@ -53,10 +64,38 @@ static void close_current_tool(void)
     s_current_tool = NULL;
 }
 
+static void update_statusbar(void)
+{
+    if (s_clock_lbl) {
+        time_t now;
+        struct tm ti;
+        time(&now);
+        localtime_r(&now, &ti);
+        char buf[8];
+        if (ti.tm_year >= (2020 - 1900)) {
+            strftime(buf, sizeof(buf), "%H:%M", &ti);
+        } else {
+            snprintf(buf, sizeof(buf), "--:--");
+        }
+        lv_label_set_text(s_clock_lbl, buf);
+    }
+    if (s_wifi_icon) {
+        if (wifi_manager_is_connected()) lv_obj_clear_flag(s_wifi_icon, LV_OBJ_FLAG_HIDDEN);
+        else                             lv_obj_add_flag(s_wifi_icon, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_bt_icon) {
+        bt_state_t bt = bt_manager_state();
+        bool on = (bt == BT_STATE_ADVERTISING || bt == BT_STATE_CONNECTED);
+        if (on) lv_obj_clear_flag(s_bt_icon, LV_OBJ_FLAG_HIDDEN);
+        else    lv_obj_add_flag(s_bt_icon, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 static void idle_tick_cb(lv_timer_t *t)
 {
     (void)t;
     if (s_current_tool || !s_menu_roller || ui_watchface_active()) return;
+    update_statusbar();
     if (lv_disp_get_inactive_time(NULL) > IDLE_TIMEOUT_MS) {
         ui_watchface_show();
     }
@@ -67,23 +106,14 @@ static void build_menu_options(void)
     size_t used = 0;
     s_menu_options[0] = '\0';
 
-    int count = menu_order_count();
-    for (int i = 0; i < count; i++) {
-        const tool_t *tool = menu_order_get(i);
+    for (int i = 0; i < g_tools_count; i++) {
+        const tool_t *tool = g_tools[i];
         const char *icon = (tool && tool->icon) ? tool->icon : LV_SYMBOL_DUMMY;
         const char *name = (tool && tool->name) ? tool->name : "Tool";
-        const char *sep = (i == (count - 1)) ? "" : "\n";
-        int written = lv_snprintf(
-            s_menu_options + used,
-            MENU_OPTIONS_BUF_SIZE - used,
-            "%s  %s%s",
-            icon,
-            name,
-            sep
-        );
-        if (written <= 0 || (size_t)written >= (MENU_OPTIONS_BUF_SIZE - used)) {
-            break;
-        }
+        const char *sep = (i == (g_tools_count - 1)) ? "" : "\n";
+        int written = lv_snprintf(s_menu_options + used, MENU_OPTIONS_BUF_SIZE - used,
+                                  "%s  %s%s", icon, name, sep);
+        if (written <= 0 || (size_t)written >= (MENU_OPTIONS_BUF_SIZE - used)) break;
         used += (size_t)written;
     }
 }
@@ -98,62 +128,30 @@ static void do_open_tool(int idx)
 
     lv_obj_clean(lv_scr_act());
     s_menu_roller = NULL;
+    s_open_btn = s_open_lbl = NULL;
+    s_clock_lbl = s_wifi_icon = s_bt_icon = NULL;
     s_current_tool = tool;
 
-    if (tool->open) {
-        tool->open(lv_scr_act());
-    }
+    if (tool->open) tool->open(lv_scr_act());
 }
 
-/* Se dispara al terminar el flash táctil: abre la tool pendiente. */
-static void open_after_flash_cb(lv_timer_t *t)
-{
-    (void)t;
-    s_open_timer = NULL;
-    int idx = s_pending_open;
-    s_pending_open = -1;
-    do_open_tool(idx);
-}
-
-/* Recolorea el resaltado con el acento de la tool al cambiar de selección. */
+/* Recolorea el acento al cambiar de selección con el scroll. */
 static void roller_value_changed(lv_event_t *e)
 {
     (void)e;
     if (!s_menu_roller) return;
-    apply_accent(lv_roller_get_selected(s_menu_roller), LV_OPA_30);
+    apply_accent(lv_roller_get_selected(s_menu_roller));
 }
 
-static void open_selected_tool(lv_event_t *e)
+/* Botón "Abrir": abre la tool centrada (evento deliberado, sin accidentes). */
+static void open_btn_cb(lv_event_t *e)
 {
     (void)e;
-    if (!s_menu_roller || s_pending_open >= 0) return; /* ya hay un flash en curso */
-
-    /* Apertura deliberada: solo abre si el toque cayó sobre la fila central
-       (la resaltada). Tocar arriba/abajo solo desplaza la selección y evita
-       aperturas accidentales al intentar hacer scroll. */
-    lv_indev_t *indev = lv_indev_get_act();
-    if (indev) {
-        lv_point_t p;
-        lv_indev_get_point(indev, &p);
-        lv_area_t a;
-        lv_obj_get_coords(s_menu_roller, &a);
-        lv_coord_t cy = (a.y1 + a.y2) / 2;
-        lv_coord_t band = lv_area_get_height(&a) / 6; /* ~media fila central */
-        if (band < 20) band = 20;
-        if (p.y < cy - band || p.y > cy + band) return; /* fuera del centro */
-    }
-
+    if (!s_menu_roller) return;
     uint16_t selected = lv_roller_get_selected(s_menu_roller);
-    if (selected >= (uint16_t)menu_order_count()) return;
-
-    /* Recordar desde dónde abrimos para volver a esta posición */
-    s_return_pos = selected;
-
-    /* Feedback táctil: destello del acento y apertura tras un breve instante */
-    apply_accent(selected, LV_OPA_COVER);
-    s_pending_open = menu_order_tool_index(selected); /* índice real en g_tools */
-    s_open_timer = lv_timer_create(open_after_flash_cb, 130, NULL);
-    lv_timer_set_repeat_count(s_open_timer, 1);
+    if (selected >= (uint16_t)g_tools_count) return;
+    s_return_pos = selected; /* volver aquí al cerrar la tool */
+    do_open_tool((int)selected);
 }
 
 static void screen_gesture_cb(lv_event_t *e)
@@ -171,6 +169,21 @@ static void screen_gesture_cb(lv_event_t *e)
     }
 }
 
+/* Arco decorativo fino pegado al borde circular. */
+static void create_frame_arc(lv_obj_t *parent)
+{
+    lv_obj_t *arc = lv_arc_create(parent);
+    lv_obj_set_size(arc, 236, 236);
+    lv_obj_center(arc);
+    lv_arc_set_bg_angles(arc, 0, 360);
+    lv_arc_set_value(arc, 0);
+    lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
+    lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_arc_width(arc, 3, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(arc, lv_color_hex(0x142433), LV_PART_MAIN);
+    lv_obj_set_style_arc_width(arc, 0, LV_PART_INDICATOR);
+}
+
 void create_main_menu(void)
 {
     static bool s_registered = false;
@@ -183,28 +196,45 @@ void create_main_menu(void)
     }
 
     close_current_tool();
-    if (s_open_timer) { lv_timer_del(s_open_timer); s_open_timer = NULL; }
-    s_pending_open = -1;
     lv_obj_clean(lv_scr_act());
 
-    menu_order_load();
     build_menu_options();
 
+    /* Marco decorativo (detrás de todo) */
+    create_frame_arc(lv_scr_act());
+
+    /* --- Barra de estado superior: reloj + Wi-Fi/BT --- */
+    s_clock_lbl = lv_label_create(lv_scr_act());
+    lv_obj_set_style_text_font(s_clock_lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(s_clock_lbl, lv_color_hex(0x8899AA), 0);
+    lv_label_set_text(s_clock_lbl, "--:--");
+    lv_obj_align(s_clock_lbl, LV_ALIGN_TOP_MID, 0, 20);
+
+    s_wifi_icon = lv_label_create(lv_scr_act());
+    lv_label_set_text(s_wifi_icon, LV_SYMBOL_WIFI);
+    lv_obj_set_style_text_color(s_wifi_icon, lv_color_hex(0x8899AA), 0);
+    lv_obj_align(s_wifi_icon, LV_ALIGN_TOP_MID, -40, 21);
+    lv_obj_add_flag(s_wifi_icon, LV_OBJ_FLAG_HIDDEN);
+
+    s_bt_icon = lv_label_create(lv_scr_act());
+    lv_label_set_text(s_bt_icon, LV_SYMBOL_BLUETOOTH);
+    lv_obj_set_style_text_color(s_bt_icon, lv_color_hex(0x8899AA), 0);
+    lv_obj_align(s_bt_icon, LV_ALIGN_TOP_MID, 40, 21);
+    lv_obj_add_flag(s_bt_icon, LV_OBJ_FLAG_HIDDEN);
+
+    /* --- Roller central --- */
     s_menu_roller = lv_roller_create(lv_scr_act());
     lv_roller_set_options(s_menu_roller, s_menu_options, LV_ROLLER_MODE_INFINITE);
     lv_roller_set_visible_row_count(s_menu_roller, 3);
-    lv_obj_set_width(s_menu_roller, 220);
-    lv_obj_center(s_menu_roller);
-    lv_obj_add_event_cb(s_menu_roller, open_selected_tool, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_width(s_menu_roller, 210);
+    lv_obj_align(s_menu_roller, LV_ALIGN_CENTER, 0, -6);
     lv_obj_add_event_cb(s_menu_roller, roller_value_changed, LV_EVENT_VALUE_CHANGED, NULL);
 
     /* Animación de asentado suave al soltar el scroll */
     lv_obj_set_style_anim_time(s_menu_roller, 280, LV_PART_MAIN);
 
-    /* Fondo transparente; el resaltado es una "pill" redondeada con acento */
     lv_obj_set_style_bg_opa(s_menu_roller, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_menu_roller, 0, LV_PART_MAIN);
-
     lv_obj_set_style_border_width(s_menu_roller, 0, LV_PART_SELECTED);
     lv_obj_set_style_radius(s_menu_roller, 22, LV_PART_SELECTED);
     lv_obj_set_style_pad_left(s_menu_roller, 14, LV_PART_SELECTED);
@@ -213,17 +243,31 @@ void create_main_menu(void)
     lv_obj_set_style_text_color(s_menu_roller, lv_color_hex(0x556677), LV_PART_MAIN);
     lv_obj_set_style_text_font(s_menu_roller, &lv_font_montserrat_28, LV_PART_SELECTED);
     lv_obj_set_style_text_color(s_menu_roller, lv_color_white(), LV_PART_SELECTED);
-
     lv_obj_set_style_text_align(s_menu_roller, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_menu_roller, LV_TEXT_ALIGN_LEFT, LV_PART_SELECTED);
 
+    /* --- Botón de abrir (abajo), teñido con el acento de la tool --- */
+    s_open_btn = lv_btn_create(lv_scr_act());
+    lv_obj_set_size(s_open_btn, 116, 42);
+    lv_obj_align(s_open_btn, LV_ALIGN_BOTTOM_MID, 0, -16);
+    lv_obj_set_style_radius(s_open_btn, 21, 0);
+    lv_obj_set_style_bg_color(s_open_btn, lv_color_hex(0x1C2A38), 0);
+    lv_obj_set_style_bg_opa(s_open_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_open_btn, 2, 0);
+    lv_obj_add_event_cb(s_open_btn, open_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    s_open_lbl = lv_label_create(s_open_btn);
+    lv_obj_set_style_text_font(s_open_lbl, &lv_font_montserrat_16, 0);
+    lv_label_set_text(s_open_lbl, LV_SYMBOL_OK "  Abrir");
+    lv_obj_center(s_open_lbl);
+
     /* Volver a la posición desde la que se abrió la última tool (default 0) */
-    if (s_return_pos < (uint16_t)menu_order_count()) {
+    if (s_return_pos < (uint16_t)g_tools_count) {
         lv_roller_set_selected(s_menu_roller, s_return_pos, LV_ANIM_OFF);
     }
 
-    /* Acento inicial de la tool centrada */
-    apply_accent(lv_roller_get_selected(s_menu_roller), LV_OPA_30);
+    apply_accent(lv_roller_get_selected(s_menu_roller));
+    update_statusbar();
 }
 
 void ui_menu_show(void)
