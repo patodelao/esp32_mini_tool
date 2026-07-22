@@ -22,7 +22,12 @@ static const char *TAG = "menu";
 
 #define IDLE_TIMEOUT_MS 20000
 #define MENU_OPTIONS_BUF_SIZE 768
-#define ICON_ZONE_W 72   /* ancho (px) de la zona de ícono que abre, desde la izq. */
+/* Objetivo de apertura: solo el ícono de la fila central resaltada.
+ * X0..X1 = franja horizontal del ícono desde el borde izq. del roller;
+ * CENTER_BAND = medio alto de la fila central (excluye filas vecinas). */
+#define ICON_ZONE_X0 8
+#define ICON_ZONE_X1 52
+#define CENTER_BAND  17
 
 static lv_obj_t *s_menu_roller = NULL;
 static lv_obj_t *s_pos_arc = NULL;
@@ -167,11 +172,12 @@ static void roller_click_cb(lv_event_t *e)
     lv_area_t a;
     lv_obj_get_coords(s_menu_roller, &a);
     lv_coord_t cy = (a.y1 + a.y2) / 2;
-    lv_coord_t band = lv_area_get_height(&a) / 6;
-    if (band < 20) band = 20;
 
-    if (p.y < cy - band || p.y > cy + band) return;   /* no es la fila central */
-    if (p.x > a.x1 + ICON_ZONE_W) return;             /* no es la zona del ícono */
+    /* Solo la fila CENTRAL (la resaltada): banda ceñida a su alto, para no
+       disparar con los íconos de las filas de arriba/abajo. */
+    if (p.y < cy - CENTER_BAND || p.y > cy + CENTER_BAND) return;
+    /* Solo la zona del ícono centrado (no el nombre ni el costado izquierdo). */
+    if (p.x < a.x1 + ICON_ZONE_X0 || p.x > a.x1 + ICON_ZONE_X1) return;
 
     uint16_t selected = lv_roller_get_selected(s_menu_roller);
     if (selected >= (uint16_t)g_tools_count) return;
