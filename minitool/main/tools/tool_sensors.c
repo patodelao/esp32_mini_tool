@@ -38,6 +38,7 @@ static const char *unit_for(const char *id)
     const char *leaf = slash ? slash + 1 : id;
     if (strcmp(leaf, "temp") == 0) return "C";
     if (strcmp(leaf, "hum")  == 0) return "%";
+    if (strcmp(leaf, "suelo") == 0) return "%";
     if (strcmp(leaf, "rssi") == 0) return "dBm";
     if (strcmp(leaf, "abierta_seg") == 0) return "s";
     return "";
