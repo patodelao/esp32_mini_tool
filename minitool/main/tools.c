@@ -20,6 +20,7 @@ extern const tool_t tool_dashboard;
 extern const tool_t tool_weather;
 extern const tool_t tool_pedometer;
 extern const tool_t tool_fleet;
+extern const tool_t tool_sensors;
 
 const tool_t *const g_tools[] = {
     &tool_clock,
@@ -37,6 +38,7 @@ const tool_t *const g_tools[] = {
     //&tool_tracker,
     &tool_dashboard,
     &tool_fleet,
+    &tool_sensors,
 
 };
 
