@@ -1,5 +1,0 @@
-dependencies:
-  espressif/led_strip: ^2.4.1
-  esp-idf-lib/dht: ==1.1.7
-  espressif/esp-sr: ^2.2.0
-  lvgl/lvgl: ^8
