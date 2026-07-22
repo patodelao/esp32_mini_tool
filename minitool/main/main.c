@@ -108,7 +108,7 @@ void app_main(void)
 
     /* Construir la UI inicial bajo el lock de LVGL */
     if (bsp_lvgl_lock(-1)) {
-        ui_menu_show();
+        create_main_menu();
         bsp_lvgl_unlock();
     }
 }

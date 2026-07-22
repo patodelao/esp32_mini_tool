@@ -1,9 +1,9 @@
-idf_component_register(SRCS "main.c"
+idf_component_register(SRCS "ui_menu.c" "main.c"
                             "bsp.c"
                             "wifi_manager.c"
                             "bt_manager.c"
                             "qmi8658.c"
-                            "ui_menu.c"
+                           
                             "ui_textinput.c"
                             "ui_watchface.c"
                             "tools.c"
