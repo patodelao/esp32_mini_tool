@@ -1,9 +1,9 @@
 /*
- * alert_service.c — Servicio de alertas MQTT en segundo plano.
+ * alert_service.c — Servicio de alertas en segundo plano.
  *
- * Mantiene un cliente MQTT persistente y una tabla modular de fuentes. Cada
- * fuente representa un equipo (topic + textos). Al detectar una transición de
- * estado, emite una notificación flotante vía ui_notify.
+ * Se engancha al cliente MQTT compartido (mqtt_hub) con una tabla modular de
+ * fuentes. Cada fuente representa un equipo (topic + textos). Al detectar una
+ * transición de estado, emite una notificación flotante vía ui_notify.
  *
  * Watchdog por fuente: si el equipo publica su estado "activo" como heartbeat
  * (p.ej. el refri manda "ABIERTO" cada pocos segundos), la ausencia de mensajes
@@ -11,16 +11,14 @@
  */
 #include "alert_service.h"
 #include "ui_notify.h"
+#include "mqtt_hub.h"
 
-#include "mqtt_client.h"
 #include "esp_timer.h"
 #include "esp_log.h"
 
 #include <string.h>
 
 static const char *TAG = "alert_svc";
-
-#define MQTT_BROKER_URI "mqtt://broker.hivemq.com"
 
 /* --- Definición de una fuente (equipo) ------------------------------------ */
 
@@ -56,9 +54,6 @@ static alert_source_t s_sources[] = {
 #define SOURCE_COUNT (sizeof(s_sources) / sizeof(s_sources[0]))
 #define SRC_REFRI 0
 
-static esp_mqtt_client_handle_t s_client = NULL;
-static bool s_mqtt_connected = false;
-
 /* --- Watchdog -------------------------------------------------------------- */
 
 static void watchdog_cb(void *arg)
@@ -77,7 +72,7 @@ static void watchdog_arm(alert_source_t *s)
         const esp_timer_create_args_t args = { .callback = watchdog_cb, .arg = s, .name = "alert_wd" };
         if (esp_timer_create(&args, &s->wd_timer) != ESP_OK) return;
     }
-    esp_timer_stop(s->wd_timer); /* re-armar limpio */
+    esp_timer_stop(s->wd_timer);
     esp_timer_start_once(s->wd_timer, (uint64_t)s->watchdog_ms * 1000ULL);
 }
 
@@ -99,7 +94,7 @@ static void handle_message(alert_source_t *s, const char *data, int len)
             s->active = true;
             ui_notify_push(s->name, NOTIFY_ALERT, s->msg_active);
         }
-        watchdog_arm(s); /* cada heartbeat re-arma el watchdog */
+        watchdog_arm(s);
     } else {
         if (s->active) {
             s->active = false;
@@ -109,59 +104,28 @@ static void handle_message(alert_source_t *s, const char *data, int len)
     }
 }
 
-static void mqtt_event_handler(void *args, esp_event_base_t base, int32_t event_id, void *event_data)
+/* Callback del hub: 'arg' es la fuente que registró este topic. */
+static void alert_msg_cb(const char *topic, int topic_len, const char *data, int data_len, void *arg)
 {
-    (void)args; (void)base;
-    esp_mqtt_event_handle_t event = event_data;
-
-    switch ((esp_mqtt_event_id_t)event_id) {
-        case MQTT_EVENT_CONNECTED:
-            s_mqtt_connected = true;
-            ESP_LOGI(TAG, "MQTT conectado; suscribiendo %d fuente(s)", (int)SOURCE_COUNT);
-            for (size_t i = 0; i < SOURCE_COUNT; i++) {
-                esp_mqtt_client_subscribe(s_client, s_sources[i].topic, 1);
-            }
-            break;
-
-        case MQTT_EVENT_DISCONNECTED:
-            s_mqtt_connected = false;
-            break;
-
-        case MQTT_EVENT_DATA:
-            for (size_t i = 0; i < SOURCE_COUNT; i++) {
-                alert_source_t *s = &s_sources[i];
-                if ((int)strlen(s->topic) == event->topic_len &&
-                    strncmp(event->topic, s->topic, event->topic_len) == 0) {
-                    handle_message(s, event->data, event->data_len);
-                    break;
-                }
-            }
-            break;
-
-        default:
-            break;
-    }
+    (void)topic; (void)topic_len;
+    handle_message((alert_source_t *)arg, data, data_len);
 }
 
 /* --- API pública ----------------------------------------------------------- */
 
 void alert_service_init(void)
 {
-    if (s_client) return; /* idempotente */
+    static bool s_started = false;
+    if (s_started) return;
+    s_started = true;
 
-    esp_mqtt_client_config_t cfg = {
-        .broker.address.uri = MQTT_BROKER_URI,
-    };
-    s_client = esp_mqtt_client_init(&cfg);
-    if (!s_client) {
-        ESP_LOGE(TAG, "No se pudo inicializar el cliente MQTT");
-        return;
+    mqtt_hub_init();
+    for (size_t i = 0; i < SOURCE_COUNT; i++) {
+        mqtt_hub_subscribe(s_sources[i].topic, alert_msg_cb, &s_sources[i]);
     }
-    esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
-    esp_mqtt_client_start(s_client); /* reintenta solo hasta que haya Wi-Fi */
-    ESP_LOGI(TAG, "Servicio de alertas iniciado (broker %s)", MQTT_BROKER_URI);
+    ESP_LOGI(TAG, "Servicio de alertas iniciado (%d fuente(s))", (int)SOURCE_COUNT);
 }
 
 bool alert_service_refri_open(void)     { return s_sources[SRC_REFRI].active; }
 bool alert_service_refri_has_data(void) { return s_sources[SRC_REFRI].has_data; }
-bool alert_service_mqtt_connected(void) { return s_mqtt_connected; }
+bool alert_service_mqtt_connected(void) { return mqtt_hub_connected(); }

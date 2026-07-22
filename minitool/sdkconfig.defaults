@@ -8,6 +8,9 @@ CONFIG_LV_FONT_MONTSERRAT_48=y
 # Tema oscuro por defecto (fondos oscuros, texto claro legible en las tools)
 CONFIG_LV_THEME_DEFAULT_DARK=y
 
+# Widget QR para la tool "QR WiFi"
+CONFIG_LV_USE_QRCODE=y
+
 # Flash real de la placa: 16MB
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"

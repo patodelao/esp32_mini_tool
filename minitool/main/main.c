@@ -16,6 +16,7 @@
 #include "qmi8658.h"
 #include "ui_menu.h"
 #include "ui_notify.h"
+#include "mqtt_hub.h"
 #include "alert_service.h"
 #include "weather_service.h"
 #include "pedometer_service.h"
@@ -123,7 +124,10 @@ void app_main(void)
         bsp_lvgl_unlock();
     }
 
-    /* Servicio de alertas MQTT en segundo plano (refri y futuros equipos).
+    /* Cliente MQTT compartido (alertas, fleet, sensores, control). */
+    mqtt_hub_init();
+
+    /* Servicio de alertas en segundo plano (refri y futuros equipos).
        Se conecta cuando haya Wi-Fi; enruta las alertas a ui_notify. */
     alert_service_init();
 
