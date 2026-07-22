@@ -89,16 +89,30 @@ static void touch_isr_cb(esp_lcd_touch_handle_t tp)
 
 static void lvgl_touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
 {
+    /* Hay un toque en curso: mientras dure, seguimos sondeando para capturar
+     * el movimiento y el "release" final. */
+    static bool active = false;
+
     uint16_t x[1] = {0}, y[1] = {0};
     uint8_t cnt = 0;
-    esp_lcd_touch_read_data(drv->user_data);
+
+    /* Solo tocamos el bus I2C si la interrupción INT avisó de actividad, o si
+     * un toque sigue en curso. En reposo no leemos: el CST816S entra en
+     * auto-reposo (deja de responder al I2C) y antes esas lecturas a ciegas
+     * inundaban el log con "I2C read failed" cada ~30 ms. */
+    if (xSemaphoreTake(s_touch_mux, 0) == pdTRUE || active) {
+        esp_lcd_touch_read_data(drv->user_data);
+    }
+
     bool pressed = esp_lcd_touch_get_coordinates(drv->user_data, x, y, NULL, &cnt, 1);
     if (pressed && cnt > 0) {
         data->point.x = x[0];
         data->point.y = y[0];
         data->state = LV_INDEV_STATE_PRESSED;
+        active = true;
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
+        active = false;
     }
 }
 
@@ -245,6 +259,12 @@ void bsp_init(void)
     indev_drv.disp = disp;
     indev_drv.read_cb = lvgl_touch_read_cb;
     indev_drv.user_data = s_tp;
+
+    /* Descartar cualquier INT espurio disparado durante el init (el reset del
+     * CST816S genera flancos en el pin INT): así el primer read no llega a un
+     * chip aún no listo, evitando un "I2C read failed" suelto al arranque. */
+    xSemaphoreTake(s_touch_mux, 0);
+
     lv_indev_drv_register(&indev_drv);
 
     s_lvgl_mux = xSemaphoreCreateRecursiveMutex();
