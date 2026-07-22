@@ -1,10 +1,11 @@
 /*
  * ui_menu.c — Menú principal (roller) para pantalla redonda.
  *
- * El roller se desplaza libremente (fluido) y la herramienta centrada se abre
- * con un botón dedicado abajo, evitando aperturas accidentales al hacer scroll.
- * Arriba hay una barra de estado (reloj + Wi-Fi/BT) y un arco decorativo enmarca
- * el conjunto para aprovechar los bordes de la pantalla circular.
+ * El roller se desplaza libremente (fluido). Para abrir la herramienta centrada
+ * se toca su ícono (el emoji/símbolo a la izquierda del nombre): un objetivo
+ * pequeño y deliberado que evita aperturas accidentales al hacer scroll.
+ * Arriba hay una barra de estado (reloj + Wi-Fi/BT); abajo, un arco sutil que
+ * indica la posición en la lista. Un arco fino enmarca el borde circular.
  */
 #include "ui_menu.h"
 
@@ -21,10 +22,10 @@ static const char *TAG = "menu";
 
 #define IDLE_TIMEOUT_MS 20000
 #define MENU_OPTIONS_BUF_SIZE 768
+#define ICON_ZONE_W 72   /* ancho (px) de la zona de ícono que abre, desde la izq. */
 
 static lv_obj_t *s_menu_roller = NULL;
-static lv_obj_t *s_open_btn = NULL;
-static lv_obj_t *s_open_lbl = NULL;
+static lv_obj_t *s_pos_arc = NULL;
 static lv_obj_t *s_clock_lbl = NULL;
 static lv_obj_t *s_wifi_icon = NULL;
 static lv_obj_t *s_bt_icon = NULL;
@@ -44,7 +45,7 @@ static uint32_t pos_accent(int pos)
     return (t && t->accent) ? t->accent : ACCENT_DEFAULT;
 }
 
-/* Tiñe el resaltado del roller y el botón de abrir con el acento de la tool. */
+/* Tiñe el resaltado del roller y actualiza el arco de posición con el acento. */
 static void apply_accent(uint16_t selected)
 {
     lv_color_t accent = lv_color_hex(pos_accent(selected));
@@ -52,8 +53,10 @@ static void apply_accent(uint16_t selected)
         lv_obj_set_style_bg_color(s_menu_roller, accent, LV_PART_SELECTED);
         lv_obj_set_style_bg_opa(s_menu_roller, LV_OPA_30, LV_PART_SELECTED);
     }
-    if (s_open_btn)  lv_obj_set_style_border_color(s_open_btn, accent, 0);
-    if (s_open_lbl)  lv_obj_set_style_text_color(s_open_lbl, accent, 0);
+    if (s_pos_arc) {
+        lv_obj_set_style_arc_color(s_pos_arc, accent, LV_PART_INDICATOR);
+        lv_arc_set_value(s_pos_arc, selected);
+    }
 }
 
 static void close_current_tool(void)
@@ -128,7 +131,7 @@ static void do_open_tool(int idx)
 
     lv_obj_clean(lv_scr_act());
     s_menu_roller = NULL;
-    s_open_btn = s_open_lbl = NULL;
+    s_pos_arc = NULL;
     s_clock_lbl = s_wifi_icon = s_bt_icon = NULL;
     s_current_tool = tool;
 
@@ -143,14 +146,33 @@ static void roller_value_changed(lv_event_t *e)
     apply_accent(lv_roller_get_selected(s_menu_roller));
 }
 
-/* Botón "Abrir": abre la tool centrada (evento deliberado, sin accidentes). */
-static void open_btn_cb(lv_event_t *e)
+/*
+ * Abrir tocando el ícono: solo si el toque cae sobre la fila central y en la
+ * zona izquierda (donde está el emoji/símbolo). Un tap en el nombre o fuera del
+ * centro solo desplaza/selecciona, sin abrir.
+ */
+static void roller_click_cb(lv_event_t *e)
 {
     (void)e;
     if (!s_menu_roller) return;
+
+    lv_indev_t *indev = lv_indev_get_act();
+    if (!indev) return;
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+
+    lv_area_t a;
+    lv_obj_get_coords(s_menu_roller, &a);
+    lv_coord_t cy = (a.y1 + a.y2) / 2;
+    lv_coord_t band = lv_area_get_height(&a) / 6;
+    if (band < 20) band = 20;
+
+    if (p.y < cy - band || p.y > cy + band) return;   /* no es la fila central */
+    if (p.x > a.x1 + ICON_ZONE_W) return;             /* no es la zona del ícono */
+
     uint16_t selected = lv_roller_get_selected(s_menu_roller);
     if (selected >= (uint16_t)g_tools_count) return;
-    s_return_pos = selected; /* volver aquí al cerrar la tool */
+    s_return_pos = selected;
     do_open_tool((int)selected);
 }
 
@@ -203,6 +225,18 @@ void create_main_menu(void)
     /* Marco decorativo (detrás de todo) */
     create_frame_arc(lv_scr_act());
 
+    /* Arco de posición (segmento inferior), teñido con el acento */
+    s_pos_arc = lv_arc_create(lv_scr_act());
+    lv_obj_set_size(s_pos_arc, 224, 224);
+    lv_obj_center(s_pos_arc);
+    lv_arc_set_bg_angles(s_pos_arc, 55, 125);     /* segmento inferior */
+    lv_arc_set_range(s_pos_arc, 0, (g_tools_count > 1) ? (g_tools_count - 1) : 1);
+    lv_obj_remove_style(s_pos_arc, NULL, LV_PART_KNOB);
+    lv_obj_clear_flag(s_pos_arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_arc_width(s_pos_arc, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(s_pos_arc, lv_color_hex(0x142433), LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_pos_arc, 4, LV_PART_INDICATOR);
+
     /* --- Barra de estado superior: reloj + Wi-Fi/BT --- */
     s_clock_lbl = lv_label_create(lv_scr_act());
     lv_obj_set_style_text_font(s_clock_lbl, &lv_font_montserrat_16, 0);
@@ -227,8 +261,9 @@ void create_main_menu(void)
     lv_roller_set_options(s_menu_roller, s_menu_options, LV_ROLLER_MODE_INFINITE);
     lv_roller_set_visible_row_count(s_menu_roller, 3);
     lv_obj_set_width(s_menu_roller, 210);
-    lv_obj_align(s_menu_roller, LV_ALIGN_CENTER, 0, -6);
+    lv_obj_align(s_menu_roller, LV_ALIGN_CENTER, 0, -2);
     lv_obj_add_event_cb(s_menu_roller, roller_value_changed, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(s_menu_roller, roller_click_cb, LV_EVENT_CLICKED, NULL);
 
     /* Animación de asentado suave al soltar el scroll */
     lv_obj_set_style_anim_time(s_menu_roller, 280, LV_PART_MAIN);
@@ -245,21 +280,6 @@ void create_main_menu(void)
     lv_obj_set_style_text_color(s_menu_roller, lv_color_white(), LV_PART_SELECTED);
     lv_obj_set_style_text_align(s_menu_roller, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_menu_roller, LV_TEXT_ALIGN_LEFT, LV_PART_SELECTED);
-
-    /* --- Botón de abrir (abajo), teñido con el acento de la tool --- */
-    s_open_btn = lv_btn_create(lv_scr_act());
-    lv_obj_set_size(s_open_btn, 116, 42);
-    lv_obj_align(s_open_btn, LV_ALIGN_BOTTOM_MID, 0, -16);
-    lv_obj_set_style_radius(s_open_btn, 21, 0);
-    lv_obj_set_style_bg_color(s_open_btn, lv_color_hex(0x1C2A38), 0);
-    lv_obj_set_style_bg_opa(s_open_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(s_open_btn, 2, 0);
-    lv_obj_add_event_cb(s_open_btn, open_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    s_open_lbl = lv_label_create(s_open_btn);
-    lv_obj_set_style_text_font(s_open_lbl, &lv_font_montserrat_16, 0);
-    lv_label_set_text(s_open_lbl, LV_SYMBOL_OK "  Abrir");
-    lv_obj_center(s_open_lbl);
 
     /* Volver a la posición desde la que se abrió la última tool (default 0) */
     if (s_return_pos < (uint16_t)g_tools_count) {
