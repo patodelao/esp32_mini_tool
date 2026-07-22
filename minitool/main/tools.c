@@ -18,10 +18,12 @@ extern const tool_t tool_gym;
 extern const tool_t tool_tracker;
 extern const tool_t tool_dashboard;
 extern const tool_t tool_weather;
+extern const tool_t tool_pedometer;
 
 const tool_t *const g_tools[] = {
     &tool_clock,
     &tool_level,
+    &tool_pedometer,
     &tool_gyro,
     &tool_dice,
     &tool_flashlight,

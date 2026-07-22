@@ -18,6 +18,7 @@
 #include "ui_notify.h"
 #include "alert_service.h"
 #include "weather_service.h"
+#include "pedometer_service.h"
 
 static const char *TAG = "app";
 
@@ -111,7 +112,8 @@ void app_main(void)
 
     /* Construir la UI inicial bajo el lock de LVGL */
     if (bsp_lvgl_lock(-1)) {
-        ui_notify_init();   /* sistema de notificaciones flotantes */
+        ui_notify_init();          /* notificaciones flotantes */
+        pedometer_service_init();  /* contador de pasos siempre activo */
         create_main_menu();
         bsp_lvgl_unlock();
     }
