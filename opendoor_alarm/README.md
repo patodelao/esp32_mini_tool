@@ -23,6 +23,39 @@ Proyecto ESP-IDF para alarma de puerta de refrigerador con bajo consumo.
 6. Si se confirma, publica `CERRADO` (QoS 1). Si se reabre antes, vuelve a alarma.
 7. Configura wakeup por GPIO 10 y entra en deep sleep.
 
+## MQTT — integración con el minitool
+
+Además del topic original de la puerta, el nodo publica según las convenciones
+del minitool, de modo que aparece solo en sus tools (Nodos, Sensores) y en el
+bus de alertas multicanal, sin cambios del lado del minitool.
+
+| Topic | Payload | Uso | Retain |
+|---|---|---|---|
+| `proyectos/casa/refri/puerta` | `ABIERTO` / `CERRADO` | Alerta + Dashboard (compat.) | no |
+| `labo/nodo/refri/status` | `online` / `offline` | Tool **Nodos** (estado) | sí |
+| `labo/alerta/refri` | `{"origen","nivel","msg"}` | Bus de **alertas multicanal** | no |
+| `labo/sensor/refri/rssi` | dBm | Tool **Sensores** (señal Wi-Fi) | sí |
+| `labo/sensor/refri/abierta_seg` | segundos | Tool **Sensores** (duración de la apertura) | sí |
+
+### Estado online/offline (importante)
+
+El nodo vive en **deep sleep** y solo despierta al abrirse la puerta. Por eso:
+
+- `online` = despierto (puerta abierta / alarma activa).
+- `offline` = durmiendo (puerta cerrada), publicado de forma limpia antes de dormir.
+- Si el nodo cae de golpe (corte de energía, pérdida de Wi-Fi), el **LWT** del
+  broker publica `offline` por él.
+
+No es un "heartbeat de salud" continuo (eso gastaría batería): refleja
+despierto/durmiendo. Para health real habría que despertar por temporizador
+cada cierto tiempo y publicar; se puede agregar si se necesita.
+
+### Niveles de la alerta multicanal (`labo/alerta/refri`)
+
+- `aviso` — al abrirse la puerta.
+- `alarma` — cuando escala (buzzer, apertura prolongada).
+- `ok` — al confirmarse el cierre.
+
 ## Configuración rápida
 
 Edita en `main/main.c`:

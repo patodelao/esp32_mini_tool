@@ -49,12 +49,25 @@
 #define DOOR_CLOSED_CONFIRM_MS 3000
 
 #define MQTT_BROKER_URI "mqtt://broker.hivemq.com"
-#define MQTT_TOPIC_DOOR "proyectos/casa/refri/puerta"
+
+/* --- Topics ---------------------------------------------------------------
+ * Se mantiene el topic original de la puerta (compatibilidad con el dashboard
+ * y la alerta ya existentes en el minitool) y se agregan los topics según las
+ * convenciones del minitool para que este equipo aparezca solo en las tools
+ * Nodos (estado) y Sensores (RSSI/duración), y en el bus de alertas multicanal.
+ */
+#define DEVICE_ID           "refri"
+#define MQTT_TOPIC_DOOR     "proyectos/casa/refri/puerta"   /* ABIERTO/CERRADO  */
+#define MQTT_TOPIC_STATUS   "labo/nodo/" DEVICE_ID "/status" /* online/offline   */
+#define MQTT_TOPIC_ALERT    "labo/alerta/" DEVICE_ID         /* JSON multicanal  */
+#define MQTT_TOPIC_RSSI     "labo/sensor/" DEVICE_ID "/rssi" /* dBm              */
+#define MQTT_TOPIC_OPENSECS "labo/sensor/" DEVICE_ID "/abierta_seg"
 
 static const char *TAG = "door_alarm";
 static EventGroupHandle_t s_net_events;
 static bool s_wifi_shutdown_requested;
 static bool s_ws2812_ready;
+static bool s_alarm_escalated;
 static esp_mqtt_client_handle_t s_mqtt_client;
 
 static bool door_is_open(void)
@@ -202,6 +215,52 @@ static bool is_cold_boot(void)
     return esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED;
 }
 
+static bool mqtt_ready(void)
+{
+    if (s_mqtt_client == NULL || s_net_events == NULL) {
+        return false;
+    }
+    EventBits_t bits = xEventGroupGetBits(s_net_events);
+    return (bits & (WIFI_CONNECTED_BIT | MQTT_CONNECTED_BIT)) == (WIFI_CONNECTED_BIT | MQTT_CONNECTED_BIT);
+}
+
+/* Estado del nodo para la tool Nodos (retenido: el último valor persiste). */
+static void publish_status(const char *state)
+{
+    if (!mqtt_ready()) {
+        return;
+    }
+    esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_STATUS, state, 0, 1, 1 /*retain*/);
+    ESP_LOGI(TAG, "Estado nodo -> %s", state);
+}
+
+/* Alerta estructurada al bus multicanal (la consumen minitool, app, Node-RED…). */
+static void publish_alert(const char *nivel, const char *msg)
+{
+    if (!mqtt_ready()) {
+        return;
+    }
+    char payload[128];
+    snprintf(payload, sizeof(payload),
+             "{\"origen\":\"Refri\",\"nivel\":\"%s\",\"msg\":\"%s\"}", nivel, msg);
+    esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_ALERT, payload, 0, 1, 0);
+    ESP_LOGI(TAG, "Alerta [%s] %s", nivel, msg);
+}
+
+/* Señal Wi-Fi como sensor numérico (retenido) para graficar en la tool Sensores. */
+static void publish_rssi(void)
+{
+    if (!mqtt_ready()) {
+        return;
+    }
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%d", ap.rssi);
+        esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_RSSI, buf, 0, 1, 1 /*retain*/);
+    }
+}
+
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
     (void)handler_args;
@@ -211,6 +270,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     if (event_id == MQTT_EVENT_CONNECTED) {
         xEventGroupSetBits(s_net_events, MQTT_CONNECTED_BIT);
         ESP_LOGI(TAG, "MQTT conectado");
+        /* Anunciar presencia y señal en cuanto hay conexión */
+        esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_STATUS, "online", 0, 1, 1 /*retain*/);
+        publish_rssi();
     } else if (event_id == MQTT_EVENT_DISCONNECTED) {
         xEventGroupClearBits(s_net_events, MQTT_CONNECTED_BIT);
         ESP_LOGW(TAG, "MQTT desconectado");
@@ -285,6 +347,15 @@ static void mqtt_start(void)
     const esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = MQTT_BROKER_URI,
         .network.disable_auto_reconnect = false,
+        /* Testamento (LWT): si el nodo cae de golpe (corte de energía, pérdida
+           de Wi-Fi sin cierre limpio), el broker publica "offline" por él. */
+        .session.last_will = {
+            .topic = MQTT_TOPIC_STATUS,
+            .msg = "offline",
+            .msg_len = 0,
+            .qos = 1,
+            .retain = 1,
+        },
     };
 
     s_mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
@@ -359,12 +430,20 @@ static void run_alarm_until_closed(uint32_t *open_time_ms, uint32_t *heartbeat_e
         }
 
         buzzer_set(buzzer_active && *red_phase);
+
+        /* Escalada a "alarma" (multicanal) la primera vez que suena el buzzer */
+        if (buzzer_active && !s_alarm_escalated) {
+            s_alarm_escalated = true;
+            publish_alert("alarma", "Puerta abierta demasiado tiempo");
+        }
+
         vTaskDelay(pdMS_TO_TICKS(ALARM_BLINK_MS));
 
         *open_time_ms += ALARM_BLINK_MS;
         *heartbeat_elapsed_ms += ALARM_BLINK_MS;
         if (*heartbeat_elapsed_ms >= DOOR_OPEN_HEARTBEAT_MS) {
             publish_door_open_heartbeat();
+            publish_rssi();
             *heartbeat_elapsed_ms = 0;
         }
         *red_phase = !*red_phase;
@@ -452,9 +531,11 @@ static void alarm_task(void *arg)
         uint32_t heartbeat_elapsed_ms = 0;
         bool red_phase = true;
 
+        s_alarm_escalated = false;
         if (publish_door_state("ABIERTO") != ESP_OK) {
             ESP_LOGW(TAG, "No se pudo publicar ABIERTO");
         }
+        publish_alert("aviso", "Puerta abierta");
         ESP_LOGW(TAG, "Puerta ABIERTA: LED inicia a %d ms, buzzer inicia a %d ms", LED_START_DELAY_MS, BUZZER_START_DELAY_MS);
 
         while (true) {
@@ -467,6 +548,13 @@ static void alarm_task(void *arg)
                 if (publish_door_state("CERRADO") != ESP_OK) {
                     ESP_LOGW(TAG, "No se pudo publicar CERRADO");
                 }
+                publish_alert("ok", "Puerta cerrada");
+                /* Duración de la apertura como sensor (segundos) */
+                if (mqtt_ready()) {
+                    char buf[16];
+                    snprintf(buf, sizeof(buf), "%u", (unsigned)(open_time_ms / 1000));
+                    esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_OPENSECS, buf, 0, 1, 1);
+                }
                 break;
             }
 
@@ -475,6 +563,12 @@ static void alarm_task(void *arg)
     }
 
     alarm_outputs_off();
+
+    /* Anunciar que el nodo se va a dormir (offline limpio, retenido). Así la
+       tool Nodos muestra "offline"/durmiendo en vez de esperar al watchdog. */
+    publish_status("offline");
+    vTaskDelay(pdMS_TO_TICKS(150)); /* dar tiempo a que salga el paquete */
+
     s_wifi_shutdown_requested = true;
     if (s_mqtt_client != NULL) {
         ESP_ERROR_CHECK(esp_mqtt_client_stop(s_mqtt_client));
