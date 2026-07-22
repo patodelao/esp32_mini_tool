@@ -7,6 +7,7 @@
 
 #include "esp_log.h"
 #include "tool.h"
+#include "menu_order.h"
 #include "ui_watchface.h"
 
 static const char *TAG = "menu";
@@ -25,10 +26,10 @@ static lv_timer_t *s_open_timer = NULL;
 
 #define ACCENT_DEFAULT 0x2E82C8
 
-static uint32_t tool_accent(int idx)
+/* Acento de la tool en la posición visible 'pos' del menú. */
+static uint32_t pos_accent(int pos)
 {
-    if (idx < 0 || idx >= g_tools_count) return ACCENT_DEFAULT;
-    const tool_t *t = g_tools[idx];
+    const tool_t *t = menu_order_get(pos);
     return (t && t->accent) ? t->accent : ACCENT_DEFAULT;
 }
 
@@ -36,7 +37,7 @@ static uint32_t tool_accent(int idx)
 static void apply_accent(uint16_t selected, lv_opa_t pill_opa)
 {
     if (!s_menu_roller) return;
-    lv_color_t accent = lv_color_hex(tool_accent(selected));
+    lv_color_t accent = lv_color_hex(pos_accent(selected));
     lv_obj_set_style_bg_color(s_menu_roller, accent, LV_PART_SELECTED);
     lv_obj_set_style_bg_opa(s_menu_roller, pill_opa, LV_PART_SELECTED);
 }
@@ -63,11 +64,12 @@ static void build_menu_options(void)
     size_t used = 0;
     s_menu_options[0] = '\0';
 
-    for (int i = 0; i < g_tools_count; i++) {
-        const tool_t *tool = g_tools[i];
+    int count = menu_order_count();
+    for (int i = 0; i < count; i++) {
+        const tool_t *tool = menu_order_get(i);
         const char *icon = (tool && tool->icon) ? tool->icon : LV_SYMBOL_DUMMY;
         const char *name = (tool && tool->name) ? tool->name : "Tool";
-        const char *sep = (i == (g_tools_count - 1)) ? "" : "\n";
+        const char *sep = (i == (count - 1)) ? "" : "\n";
         int written = lv_snprintf(
             s_menu_options + used,
             MENU_OPTIONS_BUF_SIZE - used,
@@ -124,11 +126,11 @@ static void open_selected_tool(lv_event_t *e)
     if (!s_menu_roller || s_pending_open >= 0) return; /* ya hay un flash en curso */
 
     uint16_t selected = lv_roller_get_selected(s_menu_roller);
-    if (selected >= (uint16_t)g_tools_count) return;
+    if (selected >= (uint16_t)menu_order_count()) return;
 
     /* Feedback táctil: destello del acento y apertura tras un breve instante */
     apply_accent(selected, LV_OPA_COVER);
-    s_pending_open = (int)selected;
+    s_pending_open = menu_order_tool_index(selected); /* índice real en g_tools */
     s_open_timer = lv_timer_create(open_after_flash_cb, 130, NULL);
     lv_timer_set_repeat_count(s_open_timer, 1);
 }
@@ -164,6 +166,7 @@ void create_main_menu(void)
     s_pending_open = -1;
     lv_obj_clean(lv_scr_act());
 
+    menu_order_load();
     build_menu_options();
 
     s_menu_roller = lv_roller_create(lv_scr_act());
