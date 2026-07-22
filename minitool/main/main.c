@@ -112,6 +112,11 @@ void app_main(void)
 
     /* Construir la UI inicial bajo el lock de LVGL */
     if (bsp_lvgl_lock(-1)) {
+        /* Fondo base oscuro (navy del watchface) para todas las tools y el menú.
+           Se fija una vez; lv_obj_clean no borra el estilo propio de la pantalla. */
+        lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(0x000814), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(lv_scr_act(), LV_OPA_COVER, LV_PART_MAIN);
+
         ui_notify_init();          /* notificaciones flotantes */
         pedometer_service_init();  /* contador de pasos siempre activo */
         create_main_menu();
