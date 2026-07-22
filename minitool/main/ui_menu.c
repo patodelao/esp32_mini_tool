@@ -24,6 +24,9 @@ static char s_menu_options[MENU_OPTIONS_BUF_SIZE];
 static int s_pending_open = -1;
 static lv_timer_t *s_open_timer = NULL;
 
+/* Posición del menú a restaurar al volver de una tool (default 0 al encender) */
+static uint16_t s_return_pos = 0;
+
 #define ACCENT_DEFAULT 0x2E82C8
 
 /* Acento de la tool en la posición visible 'pos' del menú. */
@@ -125,8 +128,26 @@ static void open_selected_tool(lv_event_t *e)
     (void)e;
     if (!s_menu_roller || s_pending_open >= 0) return; /* ya hay un flash en curso */
 
+    /* Apertura deliberada: solo abre si el toque cayó sobre la fila central
+       (la resaltada). Tocar arriba/abajo solo desplaza la selección y evita
+       aperturas accidentales al intentar hacer scroll. */
+    lv_indev_t *indev = lv_indev_get_act();
+    if (indev) {
+        lv_point_t p;
+        lv_indev_get_point(indev, &p);
+        lv_area_t a;
+        lv_obj_get_coords(s_menu_roller, &a);
+        lv_coord_t cy = (a.y1 + a.y2) / 2;
+        lv_coord_t band = lv_area_get_height(&a) / 6; /* ~media fila central */
+        if (band < 20) band = 20;
+        if (p.y < cy - band || p.y > cy + band) return; /* fuera del centro */
+    }
+
     uint16_t selected = lv_roller_get_selected(s_menu_roller);
     if (selected >= (uint16_t)menu_order_count()) return;
+
+    /* Recordar desde dónde abrimos para volver a esta posición */
+    s_return_pos = selected;
 
     /* Feedback táctil: destello del acento y apertura tras un breve instante */
     apply_accent(selected, LV_OPA_COVER);
@@ -195,6 +216,11 @@ void create_main_menu(void)
 
     lv_obj_set_style_text_align(s_menu_roller, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_menu_roller, LV_TEXT_ALIGN_LEFT, LV_PART_SELECTED);
+
+    /* Volver a la posición desde la que se abrió la última tool (default 0) */
+    if (s_return_pos < (uint16_t)menu_order_count()) {
+        lv_roller_set_selected(s_menu_roller, s_return_pos, LV_ANIM_OFF);
+    }
 
     /* Acento inicial de la tool centrada */
     apply_accent(lv_roller_get_selected(s_menu_roller), LV_OPA_30);
