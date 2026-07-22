@@ -1,13 +1,15 @@
 /*
  * alert_service.c — Servicio de alertas en segundo plano.
  *
- * Se engancha al cliente MQTT compartido (mqtt_hub) con una tabla modular de
- * fuentes. Cada fuente representa un equipo (topic + textos). Al detectar una
- * transición de estado, emite una notificación flotante vía ui_notify.
+ * Dos responsabilidades, sobre el cliente MQTT compartido (mqtt_hub):
  *
- * Watchdog por fuente: si el equipo publica su estado "activo" como heartbeat
- * (p.ej. el refri manda "ABIERTO" cada pocos segundos), la ausencia de mensajes
- * durante 'watchdog_ms' se interpreta como vuelta a normal (silenciosa).
+ *  1) BUS DE ALERTAS MULTICANAL (`labo/alerta/#`): cualquier equipo publica un
+ *     JSON {"origen","nivel","msg"} y se muestra como notificación flotante.
+ *     Es agnóstico del equipo: sumar uno nuevo no requiere tocar el minitool.
+ *
+ *  2) ESTADO DEL REFRI (`proyectos/casa/refri/puerta`): mantiene abierto/cerrado
+ *     para la vista Dashboard (con watchdog). Ya NO emite notificación por aquí:
+ *     eso lo hace el bus (niveles aviso/alarma/ok), evitando duplicados.
  */
 #include "alert_service.h"
 #include "ui_notify.h"
@@ -15,57 +17,79 @@
 
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "cJSON.h"
 
 #include <string.h>
 
 static const char *TAG = "alert_svc";
 
-/* --- Definición de una fuente (equipo) ------------------------------------ */
+#define ALERT_BUS_FILTER "labo/alerta/#"
+
+/* --- Bus de alertas multicanal -------------------------------------------- */
+
+static notify_level_t level_from_str(const char *s)
+{
+    if (!s)                       return NOTIFY_INFO;
+    if (strcmp(s, "alarma") == 0) return NOTIFY_ALERT;
+    if (strcmp(s, "aviso")  == 0) return NOTIFY_WARNING;
+    if (strcmp(s, "ok")     == 0) return NOTIFY_SUCCESS;
+    return NOTIFY_INFO;
+}
+
+static void alert_bus_cb(const char *topic, int topic_len, const char *data, int data_len, void *arg)
+{
+    (void)topic; (void)topic_len; (void)arg;
+
+    char buf[192];
+    int n = data_len < (int)sizeof(buf) - 1 ? data_len : (int)sizeof(buf) - 1;
+    memcpy(buf, data, n);
+    buf[n] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        ESP_LOGW(TAG, "Alerta con JSON inválido: %s", buf);
+        return;
+    }
+    cJSON *jorigen = cJSON_GetObjectItem(root, "origen");
+    cJSON *jnivel  = cJSON_GetObjectItem(root, "nivel");
+    cJSON *jmsg    = cJSON_GetObjectItem(root, "msg");
+
+    const char *origen = (cJSON_IsString(jorigen)) ? jorigen->valuestring : "Alerta";
+    const char *nivel  = (cJSON_IsString(jnivel))  ? jnivel->valuestring  : NULL;
+    const char *msg    = (cJSON_IsString(jmsg))    ? jmsg->valuestring    : "";
+
+    ui_notify_push(origen, level_from_str(nivel), msg);
+    cJSON_Delete(root);
+}
+
+/* --- Estado del refri (para el Dashboard) --------------------------------- */
 
 typedef struct {
-    /* Configuración (constante) */
-    const char *topic;        /* topic MQTT a suscribir                     */
-    const char *name;         /* nombre mostrado en la notificación         */
-    const char *active_word;  /* payload que significa "en alerta"          */
-    const char *msg_active;   /* texto de la notificación al activarse       */
-    const char *msg_normal;   /* texto al volver a normal (NULL = no avisar) */
-    uint32_t    watchdog_ms;  /* 0 = sin watchdog                            */
+    const char *topic;        /* topic MQTT del estado                      */
+    const char *active_word;  /* payload que significa "activo/abierto"     */
+    uint32_t    watchdog_ms;  /* 0 = sin watchdog                           */
 
-    /* Estado en runtime */
     bool               active;
     bool               has_data;
     esp_timer_handle_t wd_timer;
-} alert_source_t;
+} door_source_t;
 
-/*
- * TABLA DE FUENTES — para añadir un equipo nuevo, agrega una entrada aquí.
- * Índice 0 reservado al refri (getters de conveniencia).
- */
-static alert_source_t s_sources[] = {
-    {
-        .topic       = "proyectos/casa/refri/puerta",
-        .name        = "Refri",
-        .active_word = "ABIERTO",
-        .msg_active  = "Puerta abierta",
-        .msg_normal  = "Puerta cerrada",
-        .watchdog_ms = 12000,
-    },
+static door_source_t s_refri = {
+    .topic       = "proyectos/casa/refri/puerta",
+    .active_word = "ABIERTO",
+    .watchdog_ms = 12000,
 };
-#define SOURCE_COUNT (sizeof(s_sources) / sizeof(s_sources[0]))
-#define SRC_REFRI 0
-
-/* --- Watchdog -------------------------------------------------------------- */
 
 static void watchdog_cb(void *arg)
 {
-    alert_source_t *s = (alert_source_t *)arg;
+    door_source_t *s = (door_source_t *)arg;
     if (s->active) {
-        ESP_LOGW(TAG, "[%s] watchdog: sin heartbeat, se asume normal", s->name);
-        s->active = false; /* vuelta a normal silenciosa (pérdida de señal) */
+        ESP_LOGW(TAG, "watchdog: sin heartbeat, se asume cerrado");
+        s->active = false; /* sin señal por un rato => cerrado (silencioso) */
     }
 }
 
-static void watchdog_arm(alert_source_t *s)
+static void watchdog_arm(door_source_t *s)
 {
     if (!s->watchdog_ms) return;
     if (!s->wd_timer) {
@@ -76,56 +100,43 @@ static void watchdog_arm(alert_source_t *s)
     esp_timer_start_once(s->wd_timer, (uint64_t)s->watchdog_ms * 1000ULL);
 }
 
-static void watchdog_disarm(alert_source_t *s)
+static void watchdog_disarm(door_source_t *s)
 {
     if (s->wd_timer) esp_timer_stop(s->wd_timer);
 }
 
-/* --- Procesamiento de mensajes -------------------------------------------- */
-
-static void handle_message(alert_source_t *s, const char *data, int len)
-{
-    s->has_data = true;
-    bool now_active = ((int)strlen(s->active_word) == len &&
-                       strncmp(data, s->active_word, len) == 0);
-
-    if (now_active) {
-        if (!s->active) {
-            s->active = true;
-            ui_notify_push(s->name, NOTIFY_ALERT, s->msg_active);
-        }
-        watchdog_arm(s);
-    } else {
-        if (s->active) {
-            s->active = false;
-            if (s->msg_normal) ui_notify_push(s->name, NOTIFY_SUCCESS, s->msg_normal);
-        }
-        watchdog_disarm(s);
-    }
-}
-
-/* Callback del hub: 'arg' es la fuente que registró este topic. */
-static void alert_msg_cb(const char *topic, int topic_len, const char *data, int data_len, void *arg)
+/* Solo actualiza estado (abierto/cerrado). La notificación la da el bus. */
+static void door_cb(const char *topic, int topic_len, const char *data, int data_len, void *arg)
 {
     (void)topic; (void)topic_len;
-    handle_message((alert_source_t *)arg, data, data_len);
+    door_source_t *s = (door_source_t *)arg;
+    s->has_data = true;
+
+    bool now_active = ((int)strlen(s->active_word) == data_len &&
+                       strncmp(data, s->active_word, data_len) == 0);
+    if (now_active) {
+        s->active = true;
+        watchdog_arm(s);
+    } else {
+        s->active = false;
+        watchdog_disarm(s);
+    }
 }
 
 /* --- API pública ----------------------------------------------------------- */
 
 void alert_service_init(void)
 {
-    static bool s_started = false;
-    if (s_started) return;
-    s_started = true;
+    static bool started = false;
+    if (started) return;
+    started = true;
 
     mqtt_hub_init();
-    for (size_t i = 0; i < SOURCE_COUNT; i++) {
-        mqtt_hub_subscribe(s_sources[i].topic, alert_msg_cb, &s_sources[i]);
-    }
-    ESP_LOGI(TAG, "Servicio de alertas iniciado (%d fuente(s))", (int)SOURCE_COUNT);
+    mqtt_hub_subscribe(ALERT_BUS_FILTER, alert_bus_cb, NULL);       /* multicanal */
+    mqtt_hub_subscribe(s_refri.topic, door_cb, &s_refri);          /* estado refri */
+    ESP_LOGI(TAG, "Alertas: bus %s + estado %s", ALERT_BUS_FILTER, s_refri.topic);
 }
 
-bool alert_service_refri_open(void)     { return s_sources[SRC_REFRI].active; }
-bool alert_service_refri_has_data(void) { return s_sources[SRC_REFRI].has_data; }
+bool alert_service_refri_open(void)     { return s_refri.active; }
+bool alert_service_refri_has_data(void) { return s_refri.has_data; }
 bool alert_service_mqtt_connected(void) { return mqtt_hub_connected(); }
