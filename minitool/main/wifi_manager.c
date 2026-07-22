@@ -41,6 +41,13 @@ void wifi_manager_get_ssid(char *buf, size_t len)
     }
 }
 
+void wifi_manager_get_pass(char *buf, size_t len)
+{
+    if (buf && len) {
+        strlcpy(buf, s_pass, len);
+    }
+}
+
 
 static void load_credentials(void)
 {

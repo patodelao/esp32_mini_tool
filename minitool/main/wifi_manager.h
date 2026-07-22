@@ -32,6 +32,10 @@ bool wifi_manager_is_connected(void);
 /* SSID configurado actualmente (copia a buf). */
 void wifi_manager_get_ssid(char *buf, size_t len);
 
+/* Contraseña configurada actualmente (copia a buf). Usada por la tool QR WiFi
+ * para generar el código de unión a la red. */
+void wifi_manager_get_pass(char *buf, size_t len);
+
 /* Guarda credenciales en NVS y las aplica. Si estaba conectado, reconecta.
  * Pasar NULL en cualquiera de los dos deja ese campo como está. */
 void wifi_manager_set_credentials(const char *ssid, const char *pass);
