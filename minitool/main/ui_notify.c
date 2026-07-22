@@ -1,0 +1,236 @@
+/*
+ * ui_notify.c — Implementación del sistema de notificaciones flotantes.
+ *
+ * Arquitectura (productor/consumidor desacoplado):
+ *   - ui_notify_push()  → corre en cualquier tarea. Solo copia la notificación
+ *                          a una cola de FreeRTOS. No toca LVGL.
+ *   - drain_timer_cb()  → corre en el hilo de LVGL. Saca una notificación de la
+ *                          cola y dibuja/anima el toast sobre lv_layer_top.
+ *
+ * Se muestra un toast a la vez; los siguientes esperan en la cola y aparecen
+ * cuando el actual se cierra (auto-cierre por tiempo o toque del usuario).
+ */
+#include "ui_notify.h"
+
+#include "lvgl.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "esp_log.h"
+
+#include <string.h>
+
+static const char *TAG = "notify";
+
+#define NOTIFY_QUEUE_LEN     8
+#define NOTIFY_SRC_MAX       16
+#define NOTIFY_MSG_MAX       80
+#define NOTIFY_SHOW_MS       4200   /* tiempo en pantalla antes de auto-cerrar */
+#define NOTIFY_WIDTH         194
+#define NOTIFY_TOP_Y         22     /* margen desde el borde superior */
+#define NOTIFY_DRAIN_MS      150
+
+typedef struct {
+    char           source[NOTIFY_SRC_MAX];
+    char           msg[NOTIFY_MSG_MAX];
+    notify_level_t level;
+} notify_item_t;
+
+static QueueHandle_t s_queue = NULL;
+static lv_timer_t   *s_drain_timer = NULL;
+
+/* Estado del toast actualmente visible (solo lo toca el hilo de LVGL) */
+static lv_obj_t   *s_toast = NULL;
+static lv_timer_t *s_hide_timer = NULL;
+
+/* --- Estilo por nivel ------------------------------------------------------ */
+
+static const char *level_symbol(notify_level_t lv)
+{
+    switch (lv) {
+        case NOTIFY_SUCCESS: return LV_SYMBOL_OK;
+        case NOTIFY_WARNING: return LV_SYMBOL_WARNING;
+        case NOTIFY_ALERT:   return LV_SYMBOL_BELL;
+        case NOTIFY_INFO:
+        default:             return LV_SYMBOL_LIST;
+    }
+}
+
+static lv_color_t level_color(notify_level_t lv)
+{
+    switch (lv) {
+        case NOTIFY_SUCCESS: return lv_color_hex(0x2ECC71);
+        case NOTIFY_WARNING: return lv_color_hex(0xF1C40F);
+        case NOTIFY_ALERT:   return lv_color_hex(0xE74C3C);
+        case NOTIFY_INFO:
+        default:             return lv_color_hex(0x3498DB);
+    }
+}
+
+/* --- Cierre / animación ---------------------------------------------------- */
+
+static void toast_deleted_cb(lv_anim_t *a)
+{
+    lv_obj_t *obj = (lv_obj_t *)a->var;
+    if (obj) lv_obj_del(obj);
+    if (obj == s_toast) s_toast = NULL;
+}
+
+static void close_toast(void)
+{
+    if (s_hide_timer) {
+        lv_timer_del(s_hide_timer);
+        s_hide_timer = NULL;
+    }
+    if (!s_toast) return;
+
+    /* Deslizar hacia arriba y borrar al terminar */
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_toast);
+    lv_anim_set_values(&a, lv_obj_get_y(s_toast), -120);
+    lv_anim_set_time(&a, 220);
+    lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_obj_set_y);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+    lv_anim_set_ready_cb(&a, toast_deleted_cb);
+    /* s_toast se pone a NULL en el ready_cb; mientras tanto marcamos que ya
+       no está "activo" para permitir el siguiente de la cola. */
+    lv_obj_t *going = s_toast;
+    s_toast = NULL;
+    lv_anim_set_var(&a, going);
+    lv_anim_start(&a);
+}
+
+static void hide_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    s_hide_timer = NULL;   /* este timer es one-shot */
+    close_toast();
+}
+
+static void toast_click_cb(lv_event_t *e)
+{
+    (void)e;
+    close_toast();
+}
+
+/* --- Construcción del toast (hilo de LVGL) --------------------------------- */
+
+static void show_toast(const notify_item_t *it)
+{
+    lv_color_t accent = level_color(it->level);
+
+    lv_obj_t *card = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(card);
+    lv_obj_set_width(card, NOTIFY_WIDTH);
+    lv_obj_set_height(card, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x11202E), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(card, 16, 0);
+    lv_obj_set_style_pad_all(card, 10, 0);
+    lv_obj_set_style_pad_left(card, 14, 0);
+    lv_obj_set_style_border_width(card, 2, 0);
+    lv_obj_set_style_border_color(card, accent, 0);
+    lv_obj_set_style_shadow_width(card, 12, 0);
+    lv_obj_set_style_shadow_color(card, lv_color_black(), 0);
+    lv_obj_set_style_shadow_opa(card, LV_OPA_40, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(card, toast_click_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Layout en fila: icono + (origen / mensaje) */
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(card, 10, 0);
+
+    lv_obj_t *icon = lv_label_create(card);
+    lv_label_set_text(icon, level_symbol(it->level));
+    lv_obj_set_style_text_color(icon, accent, 0);
+    lv_obj_set_style_text_font(icon, &lv_font_montserrat_28, 0);
+
+    lv_obj_t *col = lv_obj_create(card);
+    lv_obj_remove_style_all(col);
+    lv_obj_set_width(col, LV_PCT(100));
+    lv_obj_set_height(col, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(col, 1);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
+
+    if (it->source[0]) {
+        lv_obj_t *src = lv_label_create(col);
+        lv_label_set_text(src, it->source);
+        lv_obj_set_style_text_color(src, accent, 0);
+        lv_obj_set_style_text_font(src, &lv_font_montserrat_14, 0);
+    }
+
+    lv_obj_t *msg = lv_label_create(col);
+    lv_label_set_long_mode(msg, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(msg, LV_PCT(100));
+    lv_label_set_text(msg, it->msg);
+    lv_obj_set_style_text_color(msg, lv_color_white(), 0);
+    lv_obj_set_style_text_font(msg, &lv_font_montserrat_16, 0);
+
+    lv_obj_align(card, LV_ALIGN_TOP_MID, 0, NOTIFY_TOP_Y);
+    s_toast = card;
+
+    /* Animación de entrada: deslizar desde arriba */
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, card);
+    lv_anim_set_values(&a, -120, NOTIFY_TOP_Y);
+    lv_anim_set_time(&a, 260);
+    lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_obj_set_y);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_start(&a);
+
+    /* Auto-cierre */
+    s_hide_timer = lv_timer_create(hide_timer_cb, NOTIFY_SHOW_MS, NULL);
+    lv_timer_set_repeat_count(s_hide_timer, 1);
+
+    ESP_LOGI(TAG, "Toast [%s] %s", it->source, it->msg);
+}
+
+/* --- Drenado de la cola (hilo de LVGL) ------------------------------------- */
+
+static void drain_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (s_toast) return;               /* espera a que el actual se cierre */
+    if (!s_queue) return;
+
+    notify_item_t it;
+    if (xQueueReceive(s_queue, &it, 0) == pdTRUE) {
+        show_toast(&it);
+    }
+}
+
+/* --- API pública ----------------------------------------------------------- */
+
+void ui_notify_init(void)
+{
+    if (s_queue) return; /* idempotente */
+    s_queue = xQueueCreate(NOTIFY_QUEUE_LEN, sizeof(notify_item_t));
+    if (!s_queue) {
+        ESP_LOGE(TAG, "No se pudo crear la cola de notificaciones");
+        return;
+    }
+    s_drain_timer = lv_timer_create(drain_timer_cb, NOTIFY_DRAIN_MS, NULL);
+    ESP_LOGI(TAG, "Sistema de notificaciones listo");
+}
+
+void ui_notify_push(const char *source, notify_level_t level, const char *msg)
+{
+    if (!s_queue) {
+        ESP_LOGW(TAG, "push antes de init; descartada");
+        return;
+    }
+    notify_item_t it = { .level = level };
+    if (source) strlcpy(it.source, source, sizeof(it.source));
+    if (msg)    strlcpy(it.msg,    msg,    sizeof(it.msg));
+
+    /* No bloquear al productor: si la cola está llena, descartar la más vieja */
+    if (xQueueSend(s_queue, &it, 0) != pdTRUE) {
+        notify_item_t drop;
+        xQueueReceive(s_queue, &drop, 0);
+        xQueueSend(s_queue, &it, 0);
+    }
+}

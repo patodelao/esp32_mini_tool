@@ -6,6 +6,8 @@ idf_component_register(SRCS "ui_menu.c" "main.c"
                            
                             "ui_textinput.c"
                             "ui_watchface.c"
+                            "ui_notify.c"
+                            "alert_service.c"
                             "tools.c"
                             "tools/tool_clock.c"
                             "tools/tool_wifi.c"
