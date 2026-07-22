@@ -17,6 +17,7 @@
 #include "ui_menu.h"
 #include "ui_notify.h"
 #include "alert_service.h"
+#include "weather_service.h"
 
 static const char *TAG = "app";
 
@@ -118,4 +119,7 @@ void app_main(void)
     /* Servicio de alertas MQTT en segundo plano (refri y futuros equipos).
        Se conecta cuando haya Wi-Fi; enruta las alertas a ui_notify. */
     alert_service_init();
+
+    /* Servicio de clima con caché compartida (tool Clima + screensaver). */
+    weather_service_init();
 }
