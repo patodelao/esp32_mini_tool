@@ -36,7 +36,7 @@ static const char *unit_for(const char *id)
 {
     const char *slash = strrchr(id, '/');
     const char *leaf = slash ? slash + 1 : id;
-    if (strcmp(leaf, "temp") == 0) return "C";
+    if (strcmp(leaf, "temp") == 0) return "\xC2\xB0" "C";  /* °C (UTF-8, la fuente incluye 0xB0) */
     if (strcmp(leaf, "hum")  == 0) return "%";
     if (strcmp(leaf, "suelo") == 0) return "%";
     if (strcmp(leaf, "rssi") == 0) return "dBm";
