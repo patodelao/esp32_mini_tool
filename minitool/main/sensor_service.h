@@ -30,6 +30,13 @@ bool sensor_get(int i, char *id, int id_size, char *val, int val_size, uint32_t 
 /* Copia el histórico del sensor i (más viejo primero) en 'out'. Devuelve nº de puntos. */
 int sensor_history(int i, float *out, int max);
 
+/* Récord diario del sensor i: min y max acumulados (reinicio a medianoche o
+ * manual). *valid queda false si aún no hay datos. false si i fuera de rango. */
+bool sensor_get_record(int i, float *min, float *max, bool *valid);
+
+/* Borra el récord del sensor i y lo reinicia desde su último valor. */
+void sensor_reset_record(int i);
+
 #ifdef __cplusplus
 }
 #endif
