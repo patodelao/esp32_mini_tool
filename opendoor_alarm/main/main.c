@@ -20,6 +20,8 @@
 #include "nvs_flash.h"
 #include "soc/soc_caps.h"
 
+#include "ota_web.h"
+
 /* Credenciales fuera del fuente: van en secrets.h, que está en .gitignore.
  * Copiá secrets.h.example a secrets.h y completá el tuyo. Si falta, el
  * proyecto compila igual pero con valores de relleno que no conectan a nada. */
@@ -32,6 +34,9 @@
 #endif
 #ifndef WIFI_PASSWORD
 #define WIFI_PASSWORD "cambiame"
+#endif
+#ifndef OTA_PASSWORD
+#define OTA_PASSWORD "cambiame"
 #endif
 
 #define DOOR_SENSOR_GPIO GPIO_NUM_10
@@ -80,6 +85,7 @@
 #define MQTT_TOPIC_HEAP     "labo/sensor/" DEVICE_ID "/heap"   /* kB libres      */
 #define MQTT_TOPIC_IP       "labo/nodo/"   DEVICE_ID "/ip"     /* para llegarle  */
 #define MQTT_TOPIC_OPENSECS "labo/sensor/" DEVICE_ID "/abierta_seg"
+#define MQTT_TOPIC_CMD      "labo/nodo/"   DEVICE_ID "/cmd"   /* tool Control */
 
 static const char *TAG = "door_alarm";
 static EventGroupHandle_t s_net_events;
@@ -306,7 +312,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 {
     (void)handler_args;
     (void)base;
-    (void)event_data;
 
     if (event_id == MQTT_EVENT_CONNECTED) {
         xEventGroupSetBits(s_net_events, MQTT_CONNECTED_BIT);
@@ -315,6 +320,24 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_STATUS, "online", 0, 1, 1 /*retain*/);
         publish_salud();
         publish_ip();
+        esp_mqtt_client_subscribe(s_mqtt_client, MQTT_TOPIC_CMD, 1);
+        /* El servidor de actualizacion se levanta recien con red arriba. */
+        ota_web_start(OTA_PASSWORD, publish_alert);
+    } else if (event_id == MQTT_EVENT_DATA) {
+        esp_mqtt_event_handle_t ev = (esp_mqtt_event_handle_t)event_data;
+        char cmd[24];
+        int n = ev->data_len < (int)sizeof(cmd) - 1 ? ev->data_len : (int)sizeof(cmd) - 1;
+        memcpy(cmd, ev->data, n);
+        cmd[n] = '\0';
+        ESP_LOGI(TAG, "CMD: %s", cmd);
+        if (strcmp(cmd, "reset") == 0 || strcmp(cmd, "reiniciar") == 0) {
+            publish_alert("ok", "Reiniciando el nodo");
+            vTaskDelay(pdMS_TO_TICKS(200));
+            esp_restart();
+        } else if (strcmp(cmd, "leer") == 0) {
+            publish_salud();
+            publish_ip();
+        }
     } else if (event_id == MQTT_EVENT_DISCONNECTED) {
         xEventGroupClearBits(s_net_events, MQTT_CONNECTED_BIT);
         ESP_LOGW(TAG, "MQTT desconectado");

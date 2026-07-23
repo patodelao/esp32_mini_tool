@@ -27,6 +27,8 @@ static const cmd_t s_cmds[] = {
     { "Reset pieza", "labo/nodo/pieza/cmd",   "reset"   },
     { "Cal suelo ON","labo/nodo/pieza/cmd",   "cal on"  },
     { "Cal suelo OFF","labo/nodo/pieza/cmd",  "cal off" },
+    { "Leer refri",  "labo/nodo/refri/cmd",   "leer"    },
+    { "Reset refri", "labo/nodo/refri/cmd",   "reset"   },
     { "Backup Pi",   "labo/pi/cmd",           "backup"  },
 };
 #define CMD_COUNT (sizeof(s_cmds) / sizeof(s_cmds[0]))

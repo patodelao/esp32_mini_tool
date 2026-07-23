@@ -1,0 +1,16 @@
+# Tabla de particiones con DOS ranuras de aplicación, que es lo que exige OTA:
+# el firmware nuevo se escribe en la ranura que no está corriendo y recién al
+# terminar y verificar se cambia el arranque. Si la subida se corta, el equipo
+# sigue arrancando con el firmware viejo.
+#
+# 'otadata' guarda cuál de las dos ranuras es la buena.
+#
+# Dimensionado para 4 MB, que es el mínimo de cualquier módulo ESP32-S3. Con
+# 1.87 MB por ranura sobra: el binario actual pesa ~0.9 MB.
+#
+# Name,     Type, SubType, Offset,   Size
+nvs,        data, nvs,     0x9000,   0x6000
+otadata,    data, ota,     0xf000,   0x2000
+phy_init,   data, phy,     0x11000,  0x1000
+ota_0,      app,  ota_0,   0x20000,  0x1E0000
+ota_1,      app,  ota_1,   0x200000, 0x1E0000

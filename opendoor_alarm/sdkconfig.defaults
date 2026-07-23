@@ -1,0 +1,20 @@
+# Configuración base del nodo del refri (ESP32-S3).
+#
+# sdkconfig está en .gitignore, así que todo lo que tenga que sobrevivir a un
+# checkout nuevo va acá. Fijar el target evita el clásico "idf.py build genera
+# sdkconfig para esp32 y el link falla".
+CONFIG_IDF_TARGET="esp32s3"
+
+# 4 MB es el mínimo de cualquier módulo ESP32-S3; si el tuyo tiene 8 o 16, esto
+# igual funciona (usa menos). Antes estaba en 2 MB, que ni siquiera alcanzaba
+# para las dos ranuras de OTA.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# Tabla con dos ranuras de app, necesaria para actualizar por Wi-Fi.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# El firmware llega por POST en una sola conexión larga: sin esto el servidor
+# corta la subida a la mitad.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024

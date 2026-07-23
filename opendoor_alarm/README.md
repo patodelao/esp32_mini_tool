@@ -84,3 +84,45 @@ idf.py fullclean
 idf.py build
 idf.py -p <PUERTO> flash monitor
 ```
+
+---
+
+## Actualizar por Wi-Fi (OTA)
+
+El nodo levanta un servidor HTTP mínimo y recibe el firmware por POST. No hace
+falta servidor externo ni nube: se sube desde la misma PC donde compilás.
+
+```bash
+curl -X POST --data-binary @build/opendoor_alarm.bin "http://<ip>/update?key=<OTA_PASSWORD>"
+```
+
+La IP se ve en la tool **Nodos** del minitool (el nodo la publica retenida), o
+entrando con el navegador a `http://<ip>/`, que muestra una página con la
+ranura activa y el tiempo encendido.
+
+**Por qué distinto al ESP8266.** El nodo de la pieza usa ArduinoOTA, que es de
+Arduino y no existe en ESP-IDF. Acá el modelo se invierte: el que abre la
+conexión es tu PC, no el nodo. Eso tiene una ventaja concreta — **no depende
+del firewall de Windows**, que fue justo lo que costó hacer andar el otro.
+
+### Requisitos que esto impuso
+
+- **Tabla de particiones con dos ranuras** (`partitions.csv`): el firmware
+  nuevo se escribe en la que no está corriendo y el arranque se cambia recién
+  al terminar y verificar. Una subida cortada no rompe nada: sigue arrancando
+  el viejo.
+- **Flash de 4 MB** (`sdkconfig.defaults`). Estaba configurado en 2 MB, donde
+  dos ranuras no entran. 4 MB es el mínimo de cualquier módulo ESP32-S3.
+- El **primer flasheo con esta tabla tiene que ser por cable**: cambia el mapa
+  de la flash, así que no puede aplicarse a sí mismo por OTA.
+
+> 🔒 La clave viaja en la URL sobre HTTP plano. Sirve para que nadie de tu red
+> flashee el refri por accidente, no contra alguien que esté espiando el
+> tráfico. Para eso haría falta HTTPS con certificados.
+
+## Comandos (tool Control)
+
+| Topic | Payload | Qué hace |
+|---|---|---|
+| `labo/nodo/refri/cmd` | `reset` | reinicia el nodo |
+| `labo/nodo/refri/cmd` | `leer` | republica telemetría e IP ya |
