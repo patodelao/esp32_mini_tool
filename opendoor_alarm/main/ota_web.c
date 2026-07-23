@@ -17,7 +17,11 @@
 
 static const char *TAG = "ota_web";
 
+/* El buffer es estatico, no de pila: httpd atiende una peticion por vez y
+ * 1 kB en la pila de su task (4 kB por defecto) es justo lo que la hace
+ * desbordar en medio de la subida. */
 #define CHUNK 1024
+static char s_buf[CHUNK];
 
 static httpd_handle_t    s_server = NULL;
 static const char       *s_key = NULL;
@@ -99,10 +103,11 @@ static esp_err_t update_post(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    char buf[CHUNK];
-    int remaining = req->content_len;
+    int total = req->content_len;
+    int remaining = total;
+    int last_log = 0;
     while (remaining > 0) {
-        int got = httpd_req_recv(req, buf, remaining < CHUNK ? remaining : CHUNK);
+        int got = httpd_req_recv(req, s_buf, remaining < CHUNK ? remaining : CHUNK);
         if (got == HTTPD_SOCK_ERR_TIMEOUT) continue;   /* reintentar */
         if (got <= 0) {
             ESP_LOGE(TAG, "Subida cortada (quedaban %d bytes)", remaining);
@@ -111,7 +116,7 @@ static esp_err_t update_post(httpd_req_t *req)
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "subida cortada");
             return ESP_FAIL;
         }
-        err = esp_ota_write(handle, buf, got);
+        err = esp_ota_write(handle, s_buf, got);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "esp_ota_write: %s", esp_err_to_name(err));
             esp_ota_abort(handle);
@@ -119,6 +124,13 @@ static esp_err_t update_post(httpd_req_t *req)
             return ESP_FAIL;
         }
         remaining -= got;
+
+        /* Progreso cada 128 kB: si algo falla, el monitor serie dice donde. */
+        int done = total - remaining;
+        if (done - last_log >= 128 * 1024) {
+            last_log = done;
+            ESP_LOGI(TAG, "OTA %d/%d kB", done / 1024, total / 1024);
+        }
     }
 
     err = esp_ota_end(handle);   /* acá se valida el binario */
@@ -153,6 +165,10 @@ esp_err_t ota_web_start(const char *key, ota_web_notify_t notify_cb)
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
+    /* 4 kB (el valor por defecto) no alcanzan para recibir y escribir firmware:
+     * la task del servidor desborda la pila a mitad de la subida y el nodo se
+     * reinicia. Se nota como "connection reset" del lado del que sube. */
+    cfg.stack_size = 8192;
     /* La subida es una sola petición larga; sin esto el socket vence a la
      * mitad en una red lenta. */
     cfg.recv_wait_timeout = 20;
