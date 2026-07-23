@@ -13,7 +13,10 @@
 
 static const char *TAG = "bt";
 
-#define BT_NAME_DEFAULT "ESP32 MiniTool"
+/* El nombre TIENE que empezar con "Bangle.js": así es como Gadgetbridge (la
+ * app de Android que reenvía las notificaciones del teléfono) reconoce al
+ * reloj. Si lo renombrás sin ese prefijo, deja de detectarlo. */
+#define BT_NAME_DEFAULT "Bangle.js mini"
 #define NVS_NAMESPACE "cfg"
 
 static char s_name[BT_NAME_MAX + 1] = BT_NAME_DEFAULT;
@@ -52,6 +55,8 @@ void bt_manager_get_name(char *buf, size_t len)
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
+#include "services/gatt/ble_svc_gatt.h"
+#include "ble_notify.h"
 
 static bool s_stack_started = false; /* nimble_port corriendo */
 static bool s_synced = false;        /* host sincronizado con el controlador */
@@ -134,6 +139,13 @@ static void stack_start_once(void)
     load_name_once();
     ESP_ERROR_CHECK(nimble_port_init());
     ble_hs_cfg.sync_cb = on_sync;
+
+    /* Servicios GATT. Van antes de lanzar la task del host: después de eso ya
+     * no se pueden registrar. */
+    ble_svc_gap_init();
+    ble_svc_gatt_init();
+    ble_notify_register();   /* notificaciones del teléfono (Gadgetbridge) */
+
     ble_svc_gap_device_name_set(s_name);
     nimble_port_freertos_init(host_task);
     s_stack_started = true;

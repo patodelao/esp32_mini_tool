@@ -2,6 +2,7 @@ idf_component_register(SRCS "ui_menu.c" "main.c"
                             "bsp.c"
                             "wifi_manager.c"
                             "bt_manager.c"
+                            "ble_notify.c"
                             "qmi8658.c"
                            
                             "ui_textinput.c"
