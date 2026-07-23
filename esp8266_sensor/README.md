@@ -11,7 +11,7 @@ publica todo por MQTT siguiendo las convenciones del minitool.
 
 ## Qué publica
 
-Al broker `broker.hivemq.com`, con `<id>` = `NODE_ID` (por defecto `sala`):
+Al broker `broker.hivemq.com`, con `<id>` = `NODE_ID` (por defecto `pieza`):
 
 | Topic | Payload | Sensor | Retain |
 |---|---|---|---|
@@ -83,9 +83,9 @@ Salida esperada:
 
 ```
 === ESP8266 sensor: aire (DHT22) + suelo (HW-103) + MQTT ===
-Nodo: sala
-  aire  -> labo/sensor/sala/temp | labo/sensor/sala/hum (D2)
-  suelo -> labo/sensor/sala/suelo (A0)
+Nodo: pieza
+  aire  -> labo/sensor/pieza/temp | labo/sensor/pieza/hum (D2)
+  suelo -> labo/sensor/pieza/suelo (A0)
 WiFi: conectado. IP 192.168.x.x  RSSI -58 dBm
 MQTT: conectado
 Aire  -> T: 23.4 C   HR: 51.2 %

@@ -39,7 +39,7 @@
 
 // Identificador del nodo (sin espacios ni '/'). Aparece como labo/nodo/<NODE_ID>
 // y labo/sensor/<NODE_ID>/... en las tools del minitool.
-#define NODE_ID       "sala"
+#define NODE_ID       "pieza"
 
 // Sensores activos (1 = si, 0 = no). Por defecto ambos; pon uno en 0 para un
 // nodo solo-aire o solo-suelo sin tocar mas codigo.
@@ -55,8 +55,20 @@
 //   seco / al aire -> lectura ALTA     en agua -> lectura BAJA
 // Ajusta estos dos numeros mirando el "raw" que imprime el monitor serie:
 // deja la sonda al aire y anota SECO_RAW; sumergela en agua y anota AGUA_RAW.
-#define SUELO_SECO_RAW  820
-#define SUELO_AGUA_RAW  380
+#define SUELO_SECO_RAW  1024
+#define SUELO_AGUA_RAW  520
+
+// Modo calibracion/diagnostico: imprime el crudo del ADC cada segundo (ademas
+// del ciclo normal de 10 s), para ajustar los dos valores de arriba y para
+// revisar cableado moviendo cables en vivo. Ponlo en 0 para uso normal.
+#define CALIBRAR_SUELO  1
+
+// Limpieza puntual tras renombrar el nodo: publica un payload VACIO retenido en
+// los topics del id anterior para borrar sus mensajes retenidos del broker, y
+// que no queden sensores fantasma en el minitool. Pon 0 y reflashea despues de
+// un arranque (con una vez basta).
+#define LIMPIAR_TOPICS_VIEJOS  1
+#define ID_VIEJO               "sala"
 
 // --- MQTT ------------------------------------------------------------------
 #define MQTT_BROKER   "broker.hivemq.com"
@@ -178,6 +190,14 @@ static void conectarMqtt() {
     if (ok) {
       Serial.println("MQTT: conectado");
       mqtt.publish(TOPIC_STATUS, "online", true);
+#if LIMPIAR_TOPICS_VIEJOS
+      /* Payload vacio + retain = borra el mensaje retenido en el broker. */
+      mqtt.publish("labo/sensor/" ID_VIEJO "/temp",   "", true);
+      mqtt.publish("labo/sensor/" ID_VIEJO "/hum",    "", true);
+      mqtt.publish("labo/sensor/" ID_VIEJO "/suelo",  "", true);
+      mqtt.publish("labo/nodo/"   ID_VIEJO "/status", "", true);
+      Serial.println("Limpieza: borrados los retenidos de '" ID_VIEJO "'");
+#endif
 #if ENABLE_SUELO
       mqtt.subscribe(TOPIC_UMBRAL);   // recibe la config de umbral (retenida)
 #endif
@@ -255,6 +275,17 @@ void loop() {
   mqtt.loop();
 
   unsigned long ahora = millis();
+
+#if ENABLE_SUELO && CALIBRAR_SUELO
+  // Lectura rapida solo por serie (no publica), para calibrar y diagnosticar.
+  static unsigned long ultimaCal = 0;
+  if (ahora - ultimaCal >= 1000) {
+    ultimaCal = ahora;
+    int rawCal = leer_suelo_raw();
+    Serial.printf("[CAL] raw %4d  ->  %.0f %%\n", rawCal, suelo_pct(rawCal));
+  }
+#endif
+
   if (ahora - ultimaPublicacion >= PUBLICAR_MS) {
     ultimaPublicacion = ahora;
     publicarLectura();
