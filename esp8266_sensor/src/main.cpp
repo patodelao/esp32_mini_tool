@@ -8,6 +8,10 @@
 //   labo/sensor/<NODE_ID>/suelo  -> humedad suelo, %, texto          [retain]
 //   labo/nodo/<NODE_ID>/status   -> "online" / "offline"            [retain]
 //
+// Riego (umbral configurado desde la UI del minitool):
+//   labo/config/<NODE_ID>/suelo/umbral  <- umbral % (retenido) que envía la tool
+//   labo/alerta/<NODE_ID>               -> alerta JSON si el suelo baja del umbral
+//
 // El estado usa Last-Will (LWT): si el nodo cae, el broker publica "offline".
 //
 // Sensores (ambos opcionales via ENABLE_* mas abajo):
@@ -62,9 +66,15 @@
 #define TOPIC_TEMP    "labo/sensor/" NODE_ID "/temp"
 #define TOPIC_HUM     "labo/sensor/" NODE_ID "/hum"
 #define TOPIC_SUELO   "labo/sensor/" NODE_ID "/suelo"
+#define TOPIC_UMBRAL  "labo/config/" NODE_ID "/suelo/umbral"  /* config del minitool (retenido) */
+#define TOPIC_ALERTA  "labo/alerta/" NODE_ID                  /* bus de alertas del home-lab */
 
 // Cada cuanto leer y publicar. El DHT22 admite como maximo 1 lectura / 2 s.
 static const unsigned long PUBLICAR_MS = 10000;
+
+// Riego: umbral (%) por debajo del cual el suelo se considera "seco". Valor por
+// defecto hasta que el minitool publique el suyo (retenido) en TOPIC_UMBRAL.
+#define SUELO_HISTERESIS 5.0f          /* margen de recuperación para no spamear */
 
 // --- Objetos globales ------------------------------------------------------
 #if ENABLE_DHT
@@ -75,6 +85,11 @@ PubSubClient mqtt(wifiClient);
 
 static unsigned long ultimaPublicacion = 0;
 static char clientId[32];   // se arma con el chip id para ser unico en el broker
+
+#if ENABLE_SUELO
+static float s_umbral_suelo = 20.0f;   // % umbral de riego (lo pisa el minitool)
+static bool  s_suelo_seco   = false;   // estado con histéresis
+#endif
 
 // Parpadeo corto del LED integrado (GPIO2, activo en bajo) como senal de vida.
 static void parpadeo() {
@@ -99,6 +114,40 @@ static float suelo_pct(int raw) {
   if (pct < 0)   pct = 0;
   if (pct > 100) pct = 100;
   return pct;
+}
+
+// Callback MQTT: recibe el umbral de riego (retenido) que publica el minitool.
+static void on_mqtt(char *topic, byte *payload, unsigned int len) {
+  if (strcmp(topic, TOPIC_UMBRAL) != 0) return;
+  char b[16];
+  unsigned int n = len < sizeof(b) - 1 ? len : sizeof(b) - 1;
+  memcpy(b, payload, n);
+  b[n] = '\0';
+  float v = strtof(b, NULL);
+  if (v > 0.0f && v <= 100.0f) {
+    s_umbral_suelo = v;
+    Serial.printf("Umbral de suelo actualizado: %.0f %%\n", s_umbral_suelo);
+  }
+}
+
+// Chequea el umbral con histéresis y publica alerta al bus del home-lab. Solo
+// publica en los cambios de estado (seco -> aviso, recuperado -> ok).
+static void revisar_umbral_suelo(float pct) {
+  char payload[112];
+  if (!s_suelo_seco && pct < s_umbral_suelo) {
+    s_suelo_seco = true;
+    snprintf(payload, sizeof(payload),
+      "{\"origen\":\"Pieza\",\"nivel\":\"aviso\",\"msg\":\"Suelo seco %.0f%% (umbral %.0f%%)\"}",
+      pct, s_umbral_suelo);
+    mqtt.publish(TOPIC_ALERTA, payload);
+    Serial.printf("ALERTA: suelo seco %.0f%% < %.0f%%\n", pct, s_umbral_suelo);
+  } else if (s_suelo_seco && pct > s_umbral_suelo + SUELO_HISTERESIS) {
+    s_suelo_seco = false;
+    snprintf(payload, sizeof(payload),
+      "{\"origen\":\"Pieza\",\"nivel\":\"ok\",\"msg\":\"Suelo recuperado %.0f%%\"}", pct);
+    mqtt.publish(TOPIC_ALERTA, payload);
+    Serial.printf("Suelo recuperado: %.0f%%\n", pct);
+  }
 }
 #endif
 
@@ -129,6 +178,9 @@ static void conectarMqtt() {
     if (ok) {
       Serial.println("MQTT: conectado");
       mqtt.publish(TOPIC_STATUS, "online", true);
+#if ENABLE_SUELO
+      mqtt.subscribe(TOPIC_UMBRAL);   // recibe la config de umbral (retenida)
+#endif
     } else {
       Serial.printf("MQTT: fallo (rc=%d), reintento en 3 s\n", mqtt.state());
       delay(3000);
@@ -159,6 +211,7 @@ static void publicarLectura() {
   snprintf(buf, sizeof(buf), "%.0f", pct);
   mqtt.publish(TOPIC_SUELO, buf, true);
   Serial.printf("Suelo -> %.0f %% (raw %d)\n", pct, raw);
+  revisar_umbral_suelo(pct);
 #endif
 
   parpadeo();
@@ -188,6 +241,9 @@ void setup() {
   snprintf(clientId, sizeof(clientId), "esp8266-%s-%06X", NODE_ID, ESP.getChipId());
 
   mqtt.setServer(MQTT_BROKER, MQTT_PORT);
+#if ENABLE_SUELO
+  mqtt.setCallback(on_mqtt);
+#endif
 
   conectarWifi();
   conectarMqtt();
