@@ -10,3 +10,7 @@ sdkconfig.old
 # Editor (rutas locales de la máquina)
 **/.vscode/settings.json
 *.swp
+
+# Credenciales locales (WiFi, OTA). Ver los .example de cada proyecto.
+**/secrets.h
+**/secrets.ini

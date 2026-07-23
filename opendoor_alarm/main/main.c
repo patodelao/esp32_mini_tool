@@ -19,8 +19,19 @@
 #include "nvs_flash.h"
 #include "soc/soc_caps.h"
 
-#define WIFI_SSID "DonPatoysusecuaces"
-#define WIFI_PASSWORD "Armando1910"
+/* Credenciales fuera del fuente: van en secrets.h, que está en .gitignore.
+ * Copiá secrets.h.example a secrets.h y completá el tuyo. Si falta, el
+ * proyecto compila igual pero con valores de relleno que no conectan a nada. */
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+
+#ifndef WIFI_SSID
+#define WIFI_SSID "cambiame"
+#endif
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD "cambiame"
+#endif
 
 #define DOOR_SENSOR_GPIO GPIO_NUM_10
 #define DOOR_OPEN_LEVEL 1
