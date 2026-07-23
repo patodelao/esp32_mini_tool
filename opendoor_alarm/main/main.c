@@ -5,12 +5,10 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "driver/rmt.h"
-#include "driver/rtc_io.h"
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
-#include "esp_sleep.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -86,19 +84,12 @@
 #define MQTT_TOPIC_IP       "labo/nodo/"   DEVICE_ID "/ip"     /* para llegarle  */
 #define MQTT_TOPIC_OPENSECS "labo/sensor/" DEVICE_ID "/abierta_seg"
 #define MQTT_TOPIC_CMD      "labo/nodo/"   DEVICE_ID "/cmd"   /* tool Control */
-/* Bandera RETENIDA para pedir una ventana de actualizacion. Este nodo duerme
- * casi todo el tiempo, asi que no sirve de nada abrir el OTA "ahora": hay que
- * dejar el pedido puesto y que lo encuentre al despertar. Se borra sola al
- * consumirse, para que la ventana sea de una sola vez. */
-#define MQTT_TOPIC_OTA_FLAG "labo/config/" DEVICE_ID "/ota"
-#define OTA_WINDOW_MS       (5 * 60 * 1000)
 
 static const char *TAG = "door_alarm";
 static EventGroupHandle_t s_net_events;
 static bool s_wifi_shutdown_requested;
 static bool s_ws2812_ready;
 static bool s_alarm_escalated;
-static volatile bool s_ota_requested;   /* llego la bandera de OTA */
 static esp_mqtt_client_handle_t s_mqtt_client;
 
 static bool door_is_open(void)
@@ -241,11 +232,6 @@ static void led_startup_test(void)
     rgb_led_set(0, 0, 0);
 }
 
-static bool is_cold_boot(void)
-{
-    return esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED;
-}
-
 static bool mqtt_ready(void)
 {
     if (s_mqtt_client == NULL || s_net_events == NULL) {
@@ -324,11 +310,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         xEventGroupSetBits(s_net_events, MQTT_CONNECTED_BIT);
         ESP_LOGI(TAG, "MQTT conectado");
         /* Anunciar presencia y señal en cuanto hay conexión */
-        esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_STATUS, "online", 0, 1, 1 /*retain*/);
+        publish_status("online");
         publish_salud();
         publish_ip();
         esp_mqtt_client_subscribe(s_mqtt_client, MQTT_TOPIC_CMD, 1);
-        esp_mqtt_client_subscribe(s_mqtt_client, MQTT_TOPIC_OTA_FLAG, 1);
         /* El servidor de actualizacion se levanta recien con red arriba. */
         ota_web_start(OTA_PASSWORD, publish_alert);
     } else if (event_id == MQTT_EVENT_DATA) {
@@ -343,13 +328,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         memcpy(topic, ev->topic, tn);
         topic[tn] = '\0';
 
-        if (strcmp(topic, MQTT_TOPIC_OTA_FLAG) == 0) {
-            if (cmd[0] == '1') {
-                s_ota_requested = true;
-                ESP_LOGW(TAG, "Ventana de OTA pedida");
-            }
-            return;
-        }
 
         ESP_LOGI(TAG, "CMD: %s", cmd);
         if (strcmp(cmd, "reset") == 0 || strcmp(cmd, "reiniciar") == 0) {
@@ -359,8 +337,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         } else if (strcmp(cmd, "leer") == 0) {
             publish_salud();
             publish_ip();
-        } else if (strcmp(cmd, "ota") == 0) {
-            s_ota_requested = true;   /* util solo si esta despierto ahora */
         }
     } else if (event_id == MQTT_EVENT_DISCONNECTED) {
         xEventGroupClearBits(s_net_events, MQTT_CONNECTED_BIT);
@@ -502,43 +478,6 @@ static void publish_door_open_heartbeat(void)
     ESP_LOGI(TAG, "Heartbeat ABIERTO enviado msg_id=%d", msg_id);
 }
 
-static void run_alarm_until_closed(uint32_t *open_time_ms, uint32_t *heartbeat_elapsed_ms, bool *red_phase)
-{
-    while (door_is_open()) {
-        bool led_active = *open_time_ms >= LED_START_DELAY_MS;
-        bool buzzer_active = *open_time_ms >= BUZZER_START_DELAY_MS;
-
-        if (led_active) {
-            if (*red_phase) {
-                rgb_led_set(255, 0, 0);
-            } else {
-                rgb_led_set(0, 255, 0);
-            }
-        } else {
-            rgb_led_set(0, 0, 0);
-        }
-
-        buzzer_set(buzzer_active && *red_phase);
-
-        /* Escalada a "alarma" (multicanal) la primera vez que suena el buzzer */
-        if (buzzer_active && !s_alarm_escalated) {
-            s_alarm_escalated = true;
-            publish_alert("alarma", "Puerta abierta demasiado tiempo");
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(ALARM_BLINK_MS));
-
-        *open_time_ms += ALARM_BLINK_MS;
-        *heartbeat_elapsed_ms += ALARM_BLINK_MS;
-        if (*heartbeat_elapsed_ms >= DOOR_OPEN_HEARTBEAT_MS) {
-            publish_door_open_heartbeat();
-            publish_salud();
-            *heartbeat_elapsed_ms = 0;
-        }
-        *red_phase = !*red_phase;
-    }
-}
-
 static bool confirm_door_closed_for_ms(uint32_t confirm_ms)
 {
     uint32_t elapsed_ms = 0;
@@ -553,33 +492,6 @@ static bool confirm_door_closed_for_ms(uint32_t confirm_ms)
     }
 
     return !door_is_open();
-}
-
-static void configure_deep_sleep_wakeup(void)
-{
-    if (!rtc_gpio_is_valid_gpio(DOOR_SENSOR_GPIO)) {
-        ESP_LOGE(TAG, "GPIO %d no soporta wakeup RTC", DOOR_SENSOR_GPIO);
-        return;
-    }
-
-    ESP_ERROR_CHECK(rtc_gpio_pullup_en(DOOR_SENSOR_GPIO));
-    ESP_ERROR_CHECK(rtc_gpio_pulldown_dis(DOOR_SENSOR_GPIO));
-
-#if SOC_PM_SUPPORT_EXT0_WAKEUP
-    ESP_ERROR_CHECK(esp_sleep_enable_ext0_wakeup(DOOR_SENSOR_GPIO, DOOR_OPEN_LEVEL));
-    ESP_LOGI(TAG, "Wakeup EXT0 configurado");
-#elif SOC_PM_SUPPORT_EXT1_WAKEUP
-    esp_sleep_ext1_wakeup_mode_t mode;
-#ifdef ESP_EXT1_WAKEUP_ANY_LOW
-    mode = DOOR_OPEN_LEVEL ? ESP_EXT1_WAKEUP_ANY_HIGH : ESP_EXT1_WAKEUP_ANY_LOW;
-#else
-    mode = DOOR_OPEN_LEVEL ? ESP_EXT1_WAKEUP_ANY_HIGH : ESP_EXT1_WAKEUP_ALL_LOW;
-#endif
-    ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(1ULL << DOOR_SENSOR_GPIO, mode));
-    ESP_LOGI(TAG, "Wakeup EXT1 configurado");
-#else
-    ESP_LOGW(TAG, "Target sin soporte EXT0/EXT1");
-#endif
 }
 
 static void alarm_task(void *arg)
@@ -604,9 +516,7 @@ static void alarm_task(void *arg)
     buzzer_init();
     rgb_led_init();
     alarm_outputs_off();
-    if (is_cold_boot()) {
-        led_startup_test();
-    }
+    led_startup_test();
 
     wifi_start();
     wifi_wait_connected();
@@ -615,82 +525,81 @@ static void alarm_task(void *arg)
         ESP_LOGW(TAG, "Conectividad MQTT no lista al inicio, continuará con reconexión automática");
     }
 
-    if (door_is_open()) {
-        uint32_t open_time_ms = 0;
-        uint32_t heartbeat_elapsed_ms = 0;
-        bool red_phase = true;
+    /* Vigilancia continua. Este nodo esta enchufado, asi que no duerme: se
+       queda mirando la puerta, manda telemetria periodica y deja el servidor
+       de OTA escuchando todo el tiempo. Antes se dormia apenas terminaba y
+       despertaba por GPIO, lo que ahorraba bateria que no hace falta ahorrar y
+       hacia imposible actualizarlo o pedirle nada. */
+    bool was_open = false;
+    uint32_t open_time_ms = 0;
+    uint32_t heartbeat_ms = 0;
+    uint32_t telemetry_ms = 0;
+    bool red_phase = true;
 
-        s_alarm_escalated = false;
-        if (publish_door_state("ABIERTO") != ESP_OK) {
-            ESP_LOGW(TAG, "No se pudo publicar ABIERTO");
-        }
-        publish_alert("aviso", "Puerta abierta");
-        ESP_LOGW(TAG, "Puerta ABIERTA: LED inicia a %d ms, buzzer inicia a %d ms", LED_START_DELAY_MS, BUZZER_START_DELAY_MS);
+    while (true) {
+        bool open = door_is_open();
 
-        while (true) {
-            run_alarm_until_closed(&open_time_ms, &heartbeat_elapsed_ms, &red_phase);
-            alarm_outputs_off();
-            ESP_LOGI(TAG, "Puerta cerrada detectada, confirmando cierre por %d ms", DOOR_CLOSED_CONFIRM_MS);
-
+        if (open && !was_open) {
+            was_open = true;
+            open_time_ms = 0;
+            heartbeat_ms = 0;
+            red_phase = true;
+            s_alarm_escalated = false;
+            publish_door_state("ABIERTO");
+            publish_alert("aviso", "Puerta abierta");
+            ESP_LOGW(TAG, "Puerta ABIERTA: LED a %d ms, buzzer a %d ms",
+                     LED_START_DELAY_MS, BUZZER_START_DELAY_MS);
+        } else if (!open && was_open) {
+            /* Confirmar el cierre antes de darlo por bueno: el iman rebota. */
             if (confirm_door_closed_for_ms(DOOR_CLOSED_CONFIRM_MS)) {
-                ESP_LOGI(TAG, "Puerta CERRADA confirmada");
-                if (publish_door_state("CERRADO") != ESP_OK) {
-                    ESP_LOGW(TAG, "No se pudo publicar CERRADO");
-                }
+                was_open = false;
+                alarm_outputs_off();
+                publish_door_state("CERRADO");
                 publish_alert("ok", "Puerta cerrada");
-                /* Duración de la apertura como sensor (segundos) */
                 if (mqtt_ready()) {
                     char buf[16];
                     snprintf(buf, sizeof(buf), "%u", (unsigned)(open_time_ms / 1000));
                     esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_OPENSECS, buf, 0, 1, 1);
                 }
-                break;
+                ESP_LOGI(TAG, "Puerta CERRADA confirmada");
+            } else {
+                ESP_LOGW(TAG, "Reabierta durante la confirmacion");
+            }
+        }
+
+        if (was_open) {
+            bool led_active = open_time_ms >= LED_START_DELAY_MS;
+            bool buzzer_active = open_time_ms >= BUZZER_START_DELAY_MS;
+
+            if (led_active) rgb_led_set(red_phase ? 255 : 0, red_phase ? 0 : 255, 0);
+            else            rgb_led_set(0, 0, 0);
+            buzzer_set(buzzer_active && red_phase);
+
+            if (buzzer_active && !s_alarm_escalated) {
+                s_alarm_escalated = true;
+                publish_alert("alarma", "Puerta abierta demasiado tiempo");
             }
 
-            ESP_LOGW(TAG, "Puerta reabierta durante confirmación de cierre, reactivando alarma");
+            red_phase = !red_phase;
+            open_time_ms += ALARM_BLINK_MS;
+            heartbeat_ms += ALARM_BLINK_MS;
+            if (heartbeat_ms >= DOOR_OPEN_HEARTBEAT_MS) {
+                heartbeat_ms = 0;
+                publish_door_open_heartbeat();
+            }
         }
-    }
 
-    alarm_outputs_off();
-
-    /* Ventana de actualizacion. Este nodo duerme apenas termina su trabajo, y
-       entre que conecta y se duerme pasan un par de segundos: imposible subirle
-       firmware. Si quedo pedida la ventana (bandera retenida), se queda
-       despierto un rato con el servidor HTTP escuchando.
-
-       La bandera se borra ANTES de esperar, para que la ventana sea de una sola
-       vez: si no, tras el reinicio del OTA volveria a encontrarla puesta. */
-    if (s_ota_requested && mqtt_ready()) {
-        esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_OTA_FLAG, "", 0, 1, 1);
-        publish_alert("aviso", "Ventana de actualizacion abierta (5 min)");
-        ESP_LOGW(TAG, "Ventana OTA abierta por %d s", OTA_WINDOW_MS / 1000);
-
-        int waited = 0;
-        while (waited < OTA_WINDOW_MS) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            waited += 1000;
-            if ((waited % 60000) == 0) publish_salud();   /* senal de vida */
+        /* Telemetria de salud al mismo ritmo que los demas nodos. Sin esto sus
+           sensores quedarian viejos para siempre y el minitool avisaria que el
+           refri esta sin datos. */
+        telemetry_ms += ALARM_BLINK_MS;
+        if (telemetry_ms >= 60000) {
+            telemetry_ms = 0;
+            publish_salud();
         }
-        ESP_LOGI(TAG, "Ventana OTA cerrada");
+
+        vTaskDelay(pdMS_TO_TICKS(ALARM_BLINK_MS));
     }
-
-    /* Anunciar que el nodo se va a dormir (offline limpio, retenido). Así la
-       tool Nodos muestra "offline"/durmiendo en vez de esperar al watchdog. */
-    publish_status("offline");
-    vTaskDelay(pdMS_TO_TICKS(150)); /* dar tiempo a que salga el paquete */
-
-    s_wifi_shutdown_requested = true;
-    if (s_mqtt_client != NULL) {
-        ESP_ERROR_CHECK(esp_mqtt_client_stop(s_mqtt_client));
-        ESP_ERROR_CHECK(esp_mqtt_client_destroy(s_mqtt_client));
-        s_mqtt_client = NULL;
-    }
-    ESP_ERROR_CHECK(esp_wifi_stop());
-
-    configure_deep_sleep_wakeup();
-    ESP_LOGI(TAG, "Entrando en deep sleep");
-    vTaskDelay(pdMS_TO_TICKS(100));
-    esp_deep_sleep_start();
 }
 
 void app_main(void)

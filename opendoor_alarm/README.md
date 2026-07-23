@@ -1,6 +1,12 @@
 # opendoor_alarm
 
-Proyecto ESP-IDF para alarma de puerta de refrigerador con bajo consumo.
+Proyecto ESP-IDF para alarma de puerta de refrigerador.
+
+El nodo esta **siempre enchufado y despierto**: vigila la puerta de forma
+continua, publica telemetria cada minuto y deja el servidor de actualizacion
+escuchando todo el tiempo. (Antes dormia en deep sleep y despertaba por GPIO
+al abrirse la puerta; eso ahorraba una bateria que no existe y hacia
+imposible actualizarlo o pedirle algo mientras dormia.)
 
 ## Hardware
 

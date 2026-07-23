@@ -30,9 +30,6 @@ static const cmd_t s_cmds[] = {
     { "Cal suelo OFF","labo/nodo/pieza/cmd",  "cal off" },
     { "Leer refri",  "labo/nodo/refri/cmd",   "leer"    },
     { "Reset refri", "labo/nodo/refri/cmd",   "reset"   },
-    /* Retenido: el refri duerme casi todo el tiempo, asi que el pedido tiene
-     * que quedar puesto hasta que despierte y lo encuentre. */
-    { "OTA refri",   "labo/config/refri/ota", "1",       true },
     { "Backup Pi",   "labo/pi/cmd",           "backup"  },
 };
 #define CMD_COUNT (sizeof(s_cmds) / sizeof(s_cmds[0]))
