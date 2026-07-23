@@ -9,8 +9,12 @@
  *   - gráfico del histórico corto
  *   - pie: antigüedad de la última lectura, o el motivo de la alerta si la hay
  *
- * Botones inferiores:
- *   - ciclar (>): pasa al siguiente sensor.
+ * Se entra por una LISTA con todos los sensores y su valor; al tocar uno se
+ * abre su detalle. Con un solo nodo alcanzaba con ciclar de a uno, pero hoy
+ * son 13 sensores entre la pieza, el refri y el propio reloj.
+ *
+ * Botones inferiores (en el detalle):
+ *   - lista: vuelve al listado.
  *   - engranaje: abre el editor de umbrales del sensor (min / max, y para el
  *     suelo también cada cuánto mide el nodo). Se guardan en NVS vía
  *     sensor_alert; para el suelo, además se publican retenidos en
@@ -51,6 +55,17 @@ static lv_obj_t *s_ovl_lo = NULL;      /* fila del mínimo */
 static lv_obj_t *s_ovl_hi = NULL;      /* fila del máximo */
 static lv_obj_t *s_ovl_iv = NULL;      /* fila del intervalo (solo suelo) */
 static lv_timer_t *s_poll = NULL;
+
+/* Dos vistas: la LISTA con todos los sensores y el DETALLE de uno.
+ *
+ * Con un nodo eran 3 sensores y pasarlos con ">" iba bien. Hoy son 13 (aire,
+ * suelo y salud de la pieza, el refri y el propio reloj), y encontrar uno a
+ * base de toques dejo de tener sentido. */
+static lv_obj_t *s_detail_view = NULL;
+static lv_obj_t *s_list_view = NULL;
+static lv_obj_t *s_rows[16];          /* etiquetas de cada fila de la lista */
+static int       s_rows_n = 0;
+static bool      s_detail_mode = false;
 static lv_timer_t *s_confirm_tmr = NULL;
 static bool s_confirm = false;         /* esperando 2º toque de borrado */
 static bool s_confirm_forget = false;  /* el borrado pendiente es "olvidar sensor" */
@@ -97,6 +112,8 @@ static void confirm_timeout_cb(lv_timer_t *t)
 }
 
 static void refresh(void);
+static void list_refresh(void);
+static void show_detail(bool on);
 
 /* Pone la papelera en modo "confirmá" durante 3 s. 'forget' distingue las dos
  * acciones: borrar el récord (check) u olvidar el sensor (X). */
@@ -511,7 +528,98 @@ static void refresh(void)
     }
 }
 
-static void poll_cb(lv_timer_t *t) { (void)t; refresh(); }
+static void poll_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (s_detail_mode) refresh();
+    else               list_refresh();
+}
+
+/* ------------------------------ Vista de lista ---------------------------- */
+
+/* Texto de una fila: "Suelo Pieza      96 %". */
+static void row_text(lv_obj_t *lbl, int idx)
+{
+    char id[SENSOR_ID_MAX], val[16], name[40], buf[64];
+    uint32_t age = 0;
+    if (!sensor_get(idx, id, sizeof(id), val, sizeof(val), &age)) return;
+
+    sensor_friendly_name(id, name, sizeof(name));
+    const char *u = sensor_unit(id);
+    snprintf(buf, sizeof(buf), "%s   %s %s", name, val, u);
+    lv_label_set_text(lbl, buf);
+
+    /* Mismo codigo de color que el detalle: rojo fuera de umbral, gris viejo. */
+    sensor_alert_state_t st = sensor_alert_state(id);
+    lv_color_t c = lv_color_hex(0xDDE6F0);
+    if (age > sensor_alert_stale_limit(id))                             c = lv_color_hex(0x5A6B7A);
+    else if (st == SENSOR_ALERT_LOW || st == SENSOR_ALERT_HIGH)         c = lv_color_hex(0xE74C3C);
+    lv_obj_set_style_text_color(lbl, c, 0);
+}
+
+static void row_click_cb(lv_event_t *e)
+{
+    s_sel = (int)(intptr_t)lv_event_get_user_data(e);
+    confirm_cancel();
+    show_detail(true);
+}
+
+/* Reconstruye la lista. Solo se llama cuando cambia la CANTIDAD de sensores;
+ * los valores se refrescan en el lugar, para no romper el desplazamiento
+ * mientras se lee. */
+static void list_build(void)
+{
+    if (!s_list_view) return;
+    lv_obj_clean(s_list_view);
+    s_rows_n = 0;
+
+    int n = sensor_count();
+    for (int i = 0; i < n && i < (int)(sizeof(s_rows) / sizeof(s_rows[0])); i++) {
+        lv_obj_t *btn = lv_btn_create(s_list_view);
+        lv_obj_set_size(btn, LV_PCT(100), 34);
+        lv_obj_set_style_radius(btn, 17, 0);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1A2733), 0);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x27384A), LV_STATE_PRESSED);
+        lv_obj_add_event_cb(btn, row_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+
+        lv_obj_t *lbl = lv_label_create(btn);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(lbl, LV_PCT(100));
+        lv_obj_center(lbl);
+        s_rows[s_rows_n++] = lbl;
+    }
+}
+
+static void list_refresh(void)
+{
+    if (!s_list_view) return;
+    if (s_rows_n != sensor_count()) list_build();
+    for (int i = 0; i < s_rows_n; i++) row_text(s_rows[i], i);
+}
+
+/* Alterna entre lista y detalle. */
+static void show_detail(bool on)
+{
+    s_detail_mode = on;
+    if (s_detail_view) {
+        if (on) lv_obj_clear_flag(s_detail_view, LV_OBJ_FLAG_HIDDEN);
+        else    lv_obj_add_flag(s_detail_view, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_list_view) {
+        if (on) lv_obj_add_flag(s_list_view, LV_OBJ_FLAG_HIDDEN);
+        else    lv_obj_clear_flag(s_list_view, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (on) refresh();
+    else    list_refresh();
+}
+
+static void back_to_list_cb(lv_event_t *e)
+{
+    (void)e;
+    confirm_cancel();
+    show_detail(false);
+}
 
 static void chart_cb(lv_event_t *e)
 {
@@ -520,19 +628,30 @@ static void chart_cb(lv_event_t *e)
     refresh();
 }
 
-static void next_cb(lv_event_t *e)
-{
-    (void)e;
-    confirm_cancel();               /* cancelar borrado pendiente al cambiar */
-    int n = sensor_count();
-    if (n > 0) s_sel = (s_sel + 1) % n;
-    refresh();
-}
-
 static void sensors_open(lv_obj_t *parent)
 {
     s_sel = 0;
     s_confirm = false;
+
+    /* La lista: se entra por acá. */
+    s_list_view = lv_obj_create(parent);
+    lv_obj_remove_style_all(s_list_view);
+    lv_obj_set_size(s_list_view, 200, 196);
+    lv_obj_align(s_list_view, LV_ALIGN_CENTER, 0, 6);
+    lv_obj_set_flex_flow(s_list_view, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_list_view, 5, 0);
+    lv_obj_set_scroll_dir(s_list_view, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_list_view, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_flag(s_list_view, LV_OBJ_FLAG_EVENT_BUBBLE);   /* deja salir por gesto */
+
+    /* El detalle vive en su propio contenedor para poder ocultarlo entero. */
+    s_detail_view = lv_obj_create(parent);
+    lv_obj_remove_style_all(s_detail_view);
+    lv_obj_set_size(s_detail_view, 240, 240);
+    lv_obj_center(s_detail_view);
+    lv_obj_clear_flag(s_detail_view, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_detail_view, LV_OBJ_FLAG_HIDDEN);
+    parent = s_detail_view;   /* lo de abajo se construye adentro */
 
     s_id_lbl = lv_label_create(parent);
     lv_obj_set_style_text_font(s_id_lbl, &lv_font_montserrat_16, 0);
@@ -579,9 +698,9 @@ static void sensors_open(lv_obj_t *parent)
     lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, -52, -32);
     lv_obj_set_style_radius(btn, 17, 0);
     lv_obj_set_style_bg_color(btn, lv_color_hex(0x33445A), 0);
-    lv_obj_add_event_cb(btn, next_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn, back_to_list_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *bl = lv_label_create(btn);
-    lv_label_set_text(bl, LV_SYMBOL_RIGHT);
+    lv_label_set_text(bl, LV_SYMBOL_LIST);
     lv_obj_center(bl);
 
     s_gear_btn = lv_btn_create(parent);
@@ -606,6 +725,10 @@ static void sensors_open(lv_obj_t *parent)
     lv_label_set_text(s_reset_lbl, LV_SYMBOL_TRASH);
     lv_obj_center(s_reset_lbl);
 
+    /* De vuelta al contenedor real de la tool: el aviso de "sin sensores" se
+     * ve en cualquiera de las dos vistas. */
+    parent = lv_obj_get_parent(s_detail_view);
+
     s_empty = lv_label_create(parent);
     lv_obj_set_style_text_font(s_empty, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(s_empty, lv_color_hex(0x7F8C8D), 0);
@@ -613,7 +736,8 @@ static void sensors_open(lv_obj_t *parent)
     lv_obj_set_style_text_align(s_empty, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(s_empty, LV_ALIGN_CENTER, 0, 0);
 
-    refresh();
+    list_build();
+    show_detail(false);        /* se entra por la lista */
     s_poll = lv_timer_create(poll_cb, 1000, NULL);
 }
 
@@ -627,6 +751,9 @@ static void sensors_close(void)
     s_ovl_lo = s_ovl_hi = NULL;
     s_reset_btn = s_reset_lbl = s_gear_btn = NULL;
     s_ser = NULL;
+    s_detail_view = s_list_view = NULL;
+    s_rows_n = 0;
+    s_detail_mode = false;
 }
 
 const tool_t tool_sensors = {
