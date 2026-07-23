@@ -59,6 +59,8 @@ static lv_obj_t *s_val_bright = NULL;
 static lv_obj_t *s_val_sleep = NULL;
 static lv_obj_t *s_val_sens = NULL;
 static lv_obj_t *s_motion_sw = NULL;
+static lv_obj_t *s_val_night = NULL;
+static lv_obj_t *s_night_sw = NULL;
 
 /* ---------------------------- Textos de valor ---------------------------- */
 
@@ -80,6 +82,13 @@ static void refresh_values(void)
         /* Sin despertar por movimiento, la sensibilidad no aplica. */
         bool on = ui_power_get_motion_wake();
         lv_obj_set_style_text_color(s_val_sens, lv_color_hex(on ? COL_VALUE : 0x3A4A58), 0);
+    }
+
+    if (s_val_night) {
+        lv_label_set_text_fmt(s_val_night, "%02d:00 - %02d:00",
+                              ui_power_get_night_start(), ui_power_get_night_end());
+        bool on = ui_power_get_night();
+        lv_obj_set_style_text_color(s_val_night, lv_color_hex(on ? COL_VALUE : 0x3A4A58), 0);
     }
 }
 
@@ -291,6 +300,38 @@ static void page_sleep(lv_event_t *e)
     page_options("Apagar pantalla", labels, SLEEP_OPTS_N, sel, apply_sleep);
 }
 
+/* --- Subpáginas de la franja nocturna (hora de inicio y de fin) ----------- */
+
+static char s_hour_bufs[24][8];
+static const char *hour_labels(void)
+{
+    for (int i = 0; i < 24; i++) snprintf(s_hour_bufs[i], sizeof(s_hour_bufs[i]), "%02d:00", i);
+    return NULL;
+}
+
+static void apply_night_start(int idx)
+{
+    ui_power_set_night_range(idx, ui_power_get_night_end());
+}
+
+static void apply_night_end(int idx)
+{
+    ui_power_set_night_range(ui_power_get_night_start(), idx);
+}
+
+static void page_night_hours(bool start)
+{
+    hour_labels();
+    const char *labels[24];
+    for (int i = 0; i < 24; i++) labels[i] = s_hour_bufs[i];
+    page_options(start ? "Empieza" : "Termina", labels, 24,
+                 start ? ui_power_get_night_start() : ui_power_get_night_end(),
+                 start ? apply_night_start : apply_night_end);
+}
+
+static void page_night_start_cb(lv_event_t *e) { (void)e; page_night_hours(true); }
+static void page_night_end_cb(lv_event_t *e)   { (void)e; page_night_hours(false); }
+
 static void apply_sens(int idx) { ui_power_set_sensitivity((ui_power_sens_t)idx); }
 
 static void page_sens(lv_event_t *e)
@@ -308,6 +349,13 @@ static void motion_sw_cb(lv_event_t *e)
 {
     lv_obj_t *sw = lv_event_get_target(e);
     ui_power_set_motion_wake(lv_obj_has_state(sw, LV_STATE_CHECKED));
+    refresh_values();
+}
+
+static void night_sw_cb(lv_event_t *e)
+{
+    lv_obj_t *sw = lv_event_get_target(e);
+    ui_power_set_night(lv_obj_has_state(sw, LV_STATE_CHECKED));
     refresh_values();
 }
 
@@ -425,6 +473,22 @@ static void settings_open(lv_obj_t *parent)
     c = card_create(LV_SYMBOL_SETTINGS, 0x9B59B6, "Sensibilidad", true, page_sens, NULL);
     s_val_sens = card_value(c);
 
+    /* --- Modo noche --- */
+    header_create("Modo noche");
+
+    c = card_create(LV_SYMBOL_BELL, 0x34495E, "No molestar", false, NULL, NULL);
+    s_night_sw = lv_switch_create(c);
+    lv_obj_set_size(s_night_sw, 44, 24);
+    lv_obj_align(s_night_sw, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_bg_color(s_night_sw, lv_color_hex(0x35D07F), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    if (ui_power_get_night()) lv_obj_add_state(s_night_sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(s_night_sw, night_sw_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    c = card_create(LV_SYMBOL_PLAY, 0x34495E, "Empieza", true, page_night_start_cb, NULL);
+    s_val_night = card_value(c);   /* muestra la franja completa */
+
+    card_create(LV_SYMBOL_STOP, 0x34495E, "Termina", false, page_night_end_cb, NULL);
+
     header_create("Comunicaciones");
     card_create(LV_SYMBOL_WIFI,      0x4AA8FF, "Wi-Fi",       false, open_tool_cb, (void *)&tool_wifi);
     card_create(LV_SYMBOL_EYE_OPEN,  0x2ED9A3, "Redes",       false, open_tool_cb, (void *)&tool_wifiscan);
@@ -444,6 +508,7 @@ static void settings_close(void)
     page_close();
     s_list = NULL;
     s_val_bright = s_val_sleep = s_val_sens = s_motion_sw = NULL;
+    s_val_night = s_night_sw = NULL;
     s_bright_arc_lbl = NULL;
     s_opt_apply = NULL;
 }

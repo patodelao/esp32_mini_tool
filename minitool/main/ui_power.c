@@ -25,6 +25,7 @@
 #include "nvs.h"
 
 #include <math.h>
+#include <time.h>
 
 static const char *TAG = "ui_power";
 
@@ -38,11 +39,18 @@ static const struct { float gyro_dps; float accel_g; const char *name; } SENS[] 
     {  6.0f, 0.03f, "Alta"  },
 };
 
+/* Brillo con el que se enciende durante el modo noche: lo justo para leer la
+ * hora sin encandilarse. */
+#define NIGHT_BRIGHTNESS 15
+
 #define PWR_NS      "uipower"
 #define KEY_BRIGHT  "bright"
 #define KEY_MOTION  "motion"
 #define KEY_SENS    "sens"
 #define KEY_SLEEP   "sleep_s"
+#define KEY_NIGHT   "night"
+#define KEY_NIGHT_S "night_s"
+#define KEY_NIGHT_E "night_e"
 
 static lv_timer_t *s_timer = NULL;
 static bool s_asleep = false;
@@ -51,6 +59,9 @@ static bool s_motion_wake = true;
 static int  s_sens = UI_POWER_SENS_MEDIA;
 static int  s_sleep_s = 45;      /* 0 = no apagar nunca */
 static bool s_inhibit = false;   /* algo pide que no se duerma (ver linterna) */
+static bool s_night = false;     /* modo noche habilitado */
+static int  s_night_start = 23;
+static int  s_night_end = 7;
 
 /* Última lectura del acelerómetro, para medir el cambio entre muestras. */
 static float s_pax = 0, s_pay = 0, s_paz = 0;
@@ -67,6 +78,9 @@ static void settings_load(void)
     if (nvs_get_i32(h, KEY_MOTION, &v) == ESP_OK) s_motion_wake = (v != 0);
     if (nvs_get_i32(h, KEY_SENS, &v) == ESP_OK && v >= 0 && v < UI_POWER_SENS_COUNT) s_sens = (int)v;
     if (nvs_get_i32(h, KEY_SLEEP, &v) == ESP_OK && v >= 0 && v <= 3600) s_sleep_s = (int)v;
+    if (nvs_get_i32(h, KEY_NIGHT, &v) == ESP_OK) s_night = (v != 0);
+    if (nvs_get_i32(h, KEY_NIGHT_S, &v) == ESP_OK && v >= 0 && v <= 23) s_night_start = (int)v;
+    if (nvs_get_i32(h, KEY_NIGHT_E, &v) == ESP_OK && v >= 0 && v <= 23) s_night_end = (int)v;
     nvs_close(h);
 }
 
@@ -78,8 +92,38 @@ static void settings_save(void)
     nvs_set_i32(h, KEY_MOTION, s_motion_wake ? 1 : 0);
     nvs_set_i32(h, KEY_SENS,   (int32_t)s_sens);
     nvs_set_i32(h, KEY_SLEEP,  (int32_t)s_sleep_s);
+    nvs_set_i32(h, KEY_NIGHT,  s_night ? 1 : 0);
+    nvs_set_i32(h, KEY_NIGHT_S, (int32_t)s_night_start);
+    nvs_set_i32(h, KEY_NIGHT_E, (int32_t)s_night_end);
     nvs_commit(h);
     nvs_close(h);
+}
+
+/* ------------------------------- Modo noche ------------------------------ */
+
+bool ui_power_night_now(void)
+{
+    if (!s_night) return false;
+
+    time_t now = time(NULL);
+    if (now < 1600000000) return false;   /* sin hora válida no se silencia nada */
+
+    struct tm tm;
+    localtime_r(&now, &tm);
+    int h = tm.tm_hour;
+
+    if (s_night_start == s_night_end) return false;        /* franja vacía */
+    if (s_night_start < s_night_end) {                     /* p.ej. 1 -> 7 */
+        return h >= s_night_start && h < s_night_end;
+    }
+    return h >= s_night_start || h < s_night_end;          /* cruza medianoche */
+}
+
+/* Brillo con el que corresponde encender ahora. */
+static int wake_brightness(void)
+{
+    if (!ui_power_night_now()) return s_brightness;
+    return (s_brightness < NIGHT_BRIGHTNESS) ? s_brightness : NIGHT_BRIGHTNESS;
 }
 
 /* ------------------------------ Dormir/despertar ------------------------ */
@@ -100,7 +144,7 @@ void ui_power_wake(void)
     lv_disp_trig_activity(NULL);
     if (!s_asleep) return;
     s_asleep = false;
-    bsp_backlight_set(s_brightness);
+    bsp_backlight_set(wake_brightness());   /* atenuado si es de noche */
     ESP_LOGI(TAG, "Pantalla encendida");
 }
 
@@ -216,6 +260,27 @@ const char *ui_power_sens_name(ui_power_sens_t s)
     if (s < 0 || s >= UI_POWER_SENS_COUNT) return "?";
     return SENS[s].name;
 }
+
+void ui_power_set_night(bool on)
+{
+    s_night = on;
+    if (!s_asleep) bsp_backlight_set(wake_brightness());
+    settings_save();
+}
+
+bool ui_power_get_night(void) { return s_night; }
+
+void ui_power_set_night_range(int start_h, int end_h)
+{
+    if (start_h < 0 || start_h > 23 || end_h < 0 || end_h > 23) return;
+    s_night_start = start_h;
+    s_night_end = end_h;
+    if (!s_asleep) bsp_backlight_set(wake_brightness());
+    settings_save();
+}
+
+int ui_power_get_night_start(void) { return s_night_start; }
+int ui_power_get_night_end(void)   { return s_night_end; }
 
 void ui_power_set_sleep_s(int seconds)
 {

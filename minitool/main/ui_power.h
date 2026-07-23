@@ -66,6 +66,26 @@ const char *ui_power_sens_name(ui_power_sens_t s);
 void ui_power_set_sleep_s(int seconds);
 int  ui_power_get_sleep_s(void);
 
+/* --- Modo noche ------------------------------------------------------------
+ *
+ * En la franja configurada el reloj no interrumpe: las notificaciones NO se
+ * muestran ni encienden la pantalla (siguen quedando en el historial de la
+ * tool Alertas), y si la despertás a mano lo hace con brillo reducido.
+ *
+ * Las alertas de nivel crítico (NOTIFY_ALERT) sí pasan: para eso están.
+ */
+void ui_power_set_night(bool on);
+bool ui_power_get_night(void);
+
+/* Franja, en horas locales (0..23). Puede cruzar la medianoche (22 -> 7). */
+void ui_power_set_night_range(int start_h, int end_h);
+int  ui_power_get_night_start(void);
+int  ui_power_get_night_end(void);
+
+/* true si el modo noche está activo Y estamos dentro de la franja ahora.
+ * false si el reloj todavía no tiene la hora en hora. */
+bool ui_power_night_now(void);
+
 #ifdef __cplusplus
 }
 #endif

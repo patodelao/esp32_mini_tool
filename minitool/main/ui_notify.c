@@ -362,6 +362,14 @@ void ui_notify_push(const char *source, notify_level_t level, const char *msg)
     /* Al historial va siempre, aunque el toast se descarte por cola llena. */
     history_add(&it);
 
+    /* Modo noche: no interrumpir. La notificación queda registrada (se lee
+     * después en la tool Alertas) pero no se dibuja ni enciende la pantalla.
+     * Las críticas pasan igual: para eso son críticas. */
+    if (level != NOTIFY_ALERT && ui_power_night_now()) {
+        ESP_LOGI(TAG, "Modo noche: [%s] %s va solo al historial", it.source, it.msg);
+        return;
+    }
+
     /* No bloquear al productor: si la cola está llena, descartar la más vieja */
     if (xQueueSend(s_queue, &it, 0) != pdTRUE) {
         notify_item_t drop;
