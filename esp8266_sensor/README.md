@@ -152,6 +152,7 @@ Requisitos, una sola vez:
 
 1. Extensión **PlatformIO IDE** en VS Code (convive con la de ESP-IDF).
 2. Driver USB del NodeMCU: normalmente **CH340** (o CP2102).
+3. Crear `secrets.ini` con tus credenciales (ver sección 7).
 
 ```bash
 pio run -e nodemcuv2 -t upload    # subir por USB
@@ -222,13 +223,36 @@ Si el OTA falla incluso con la regla de firewall, el sospechoso siguiente son
 los adaptadores virtuales (VPN, VirtualBox, WSL): forzá la ruta agregando
 `--host_ip=<IP de tu PC>` a los `upload_flags`.
 
-> 🔒 `OTA_PASSWORD` está en el fuente, así que queda compilada en el binario **y
-> versionada en el repo**. Quien lea el código la sabe. El riesgo es acotado
-> (hay que estar dentro de tu WiFi), pero no reutilices una clave de otro lado.
+---
+
+## 7. Credenciales (`secrets.ini`)
+
+Las claves de WiFi y de OTA **no van en el fuente**: viven en `secrets.ini`, que
+está en `.gitignore`. PlatformIO las inyecta como `-D` al compilar, así que
+`main.cpp` las usa igual que antes.
+
+En un clone nuevo hay que crearlo antes del primer build:
+
+```bash
+cp secrets.ini.example secrets.ini   # o "copy" en Windows
+```
+
+Si falta, PlatformIO corta con *"Invalid value for option extra_configs"*.
+
+```ini
+[secrets]
+wifi_ssid = MiRedWiFi
+wifi_password = mi-clave-wifi
+ota_password = cambiame
+```
+
+> 🔒 Ojo con el historial: si alguna vez commiteaste una clave, sacarla del
+> código **no la borra de los commits ya subidos**. La única solución real es
+> **cambiar esa clave** (en el router, en el caso del WiFi).
 
 ---
 
-## 7. Replicar: agregar un nodo nuevo
+## 8. Replicar: agregar un nodo nuevo
 
 Para un segundo nodo (digamos `cocina`), en **este** proyecto:
 
@@ -261,13 +285,13 @@ broker y aparecen como sensores fantasma. Poné `LIMPIAR_TOPICS_VIEJOS 1` con
 
 ---
 
-## 8. Referencia de configuración (`main.cpp`)
+## 9. Referencia de configuración (`main.cpp`)
 
 | Define | Qué es |
 |---|---|
-| `WIFI_SSID` / `WIFI_PASSWORD` | red 2.4 GHz (el ESP8266 no hace 5 GHz) |
+| `WIFI_SSID` / `WIFI_PASSWORD` | red 2.4 GHz — **vienen de `secrets.ini`** |
+| `OTA_PASSWORD` | clave de actualización por WiFi — **de `secrets.ini`** |
 | `NODE_ID` | nombre del nodo; raíz de todos sus topics |
-| `OTA_PASSWORD` | clave de actualización por WiFi |
 | `ENABLE_DHT` / `ENABLE_SUELO` | activar/desactivar cada sensor |
 | `SUELO_VCC_PIN` | GPIO que alimenta la sonda (`14` = D5, `-1` = siempre alimentada) |
 | `SUELO_SECO_RAW` / `SUELO_AGUA_RAW` | calibración; de acá se derivan los umbrales de falla |
@@ -283,7 +307,7 @@ broker y aparecen como sensores fantasma. Poné `LIMPIAR_TOPICS_VIEJOS 1` con
 En `platformio.ini`: `board = nodemcuv2` (vale para v2 y v3), `monitor_speed`,
 `upload_speed`, y los entornos de subida.
 
-## 9. Checklist de instalación
+## 10. Checklist de instalación
 
 1. Cableá con el VCC del suelo en **D5** y flasheá **por cable**.
 2. Calibrá en la maceta real (`cal on` → mirá "Crudo Pieza" con tierra seca y

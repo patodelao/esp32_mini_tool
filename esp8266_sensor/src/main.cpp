@@ -47,8 +47,18 @@
 #include <DHT.h>
 
 // --- Configuracion: EDITAR ANTES DE FLASHEAR -------------------------------
-#define WIFI_SSID     "DonPatoysusecuaces"
-#define WIFI_PASSWORD "Armando1910"
+//
+// Las credenciales NO van aca: viven en secrets.ini (ignorado por git) y
+// PlatformIO las inyecta como -D al compilar. Copia secrets.ini.example a
+// secrets.ini y completa el tuyo. Los valores de abajo son solo el respaldo
+// para que el archivo compile si alguien lo abre suelto, y no sirven para
+// conectarse a nada.
+#ifndef WIFI_SSID
+#define WIFI_SSID     "cambiame"
+#endif
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD "cambiame"
+#endif
 
 // Identificador del nodo (sin espacios ni '/'). Aparece como labo/nodo/<NODE_ID>
 // y labo/sensor/<NODE_ID>/... en las tools del minitool.
@@ -59,9 +69,10 @@
 #define ENABLE_DHT    1     // aire: DHT22 en D2 -> temp + hum
 #define ENABLE_SUELO  1     // suelo: modulo HW-103 en A0
 
-// Clave para actualizar por WiFi (OTA). CAMBIALA antes de instalar el nodo:
-// con ella cualquiera en tu red podria reflashearlo.
-#define OTA_PASSWORD  "pieza-ota"
+// Clave para actualizar por WiFi (OTA). Tambien viene de secrets.ini.
+#ifndef OTA_PASSWORD
+#define OTA_PASSWORD  "cambiame"
+#endif
 
 // --- Hardware --------------------------------------------------------------
 #define DHT_PIN   D2        // GPIO4
