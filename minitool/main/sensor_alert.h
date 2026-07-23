@@ -62,6 +62,9 @@ void sensor_alert_set_rule(const char *id, const sensor_rule_t *r);
 /* Estado actual del sensor (para colorear la UI). */
 sensor_alert_state_t sensor_alert_state(const char *id);
 
+/* Olvida la regla y el estado de un sensor. La llama sensor_forget(). */
+void sensor_alert_forget(const char *id);
+
 /* Paso y rango recomendados para editar los umbrales de esa magnitud. */
 void sensor_alert_edit_hints(const char *id, float *step, float *min, float *max);
 

@@ -18,6 +18,10 @@
  *     ESP8266 alerte solo aunque el minitool esté apagado.
  *   - papelera: borra el récord del día del sensor actual. Pide confirmación
  *     (dos toques) para evitar borrados accidentales.
+ *   - papelera, pulsación LARGA: olvida el sensor entero (récord, histórico,
+ *     umbrales, y su retenido en el broker). Para limpiar el "Crudo" que deja
+ *     una calibración, o los fantasmas de un nodo renombrado. También pide
+ *     confirmación, con la papelera en rojo y una X.
  */
 #include "tool.h"
 #include "sensor_service.h"
@@ -49,6 +53,7 @@ static lv_obj_t *s_ovl_iv = NULL;      /* fila del intervalo (solo suelo) */
 static lv_timer_t *s_poll = NULL;
 static lv_timer_t *s_confirm_tmr = NULL;
 static bool s_confirm = false;         /* esperando 2º toque de borrado */
+static bool s_confirm_forget = false;  /* el borrado pendiente es "olvidar sensor" */
 static int s_sel = 0;
 
 /* Estado del editor de umbrales abierto */
@@ -78,6 +83,7 @@ static void confirm_cancel(void)
 {
     if (s_confirm_tmr) { lv_timer_del(s_confirm_tmr); s_confirm_tmr = NULL; }
     s_confirm = false;
+    s_confirm_forget = false;
     reset_visual_idle();
 }
 
@@ -86,28 +92,51 @@ static void confirm_timeout_cb(lv_timer_t *t)
     (void)t;
     s_confirm_tmr = NULL;   /* repeat_count 1: LVGL ya lo elimina solo */
     s_confirm = false;
+    s_confirm_forget = false;
     reset_visual_idle();
 }
 
 static void refresh(void);
+
+/* Pone la papelera en modo "confirmá" durante 3 s. 'forget' distingue las dos
+ * acciones: borrar el récord (check) u olvidar el sensor (X). */
+static void confirm_arm(bool forget)
+{
+    s_confirm = true;
+    s_confirm_forget = forget;
+    if (s_reset_btn) lv_obj_set_style_bg_color(s_reset_btn, lv_color_hex(0xB0403A), 0);
+    if (s_reset_lbl) lv_label_set_text(s_reset_lbl, forget ? LV_SYMBOL_CLOSE : LV_SYMBOL_OK);
+    if (s_confirm_tmr) lv_timer_del(s_confirm_tmr);
+    s_confirm_tmr = lv_timer_create(confirm_timeout_cb, 3000, NULL);
+    lv_timer_set_repeat_count(s_confirm_tmr, 1);
+}
 
 static void reset_cb(lv_event_t *e)
 {
     (void)e;
     if (sensor_count() == 0) return;
     if (!s_confirm) {
-        /* 1er toque: pedir confirmación (rojo + check) durante 3 s. */
-        s_confirm = true;
-        if (s_reset_btn) lv_obj_set_style_bg_color(s_reset_btn, lv_color_hex(0xB0403A), 0);
-        if (s_reset_lbl) lv_label_set_text(s_reset_lbl, LV_SYMBOL_OK);
-        s_confirm_tmr = lv_timer_create(confirm_timeout_cb, 3000, NULL);
-        lv_timer_set_repeat_count(s_confirm_tmr, 1);
+        confirm_arm(false);            /* 1er toque: pedir confirmación */
     } else {
-        /* 2º toque: confirmar borrado. */
-        sensor_reset_record(s_sel);
+        /* 2º toque: ejecutar lo que se armó. */
+        bool forget = s_confirm_forget;
         confirm_cancel();
+        if (forget) {
+            sensor_forget(s_sel);
+            if (s_sel > 0) s_sel--;    /* el índice se corrió al liberar el slot */
+        } else {
+            sensor_reset_record(s_sel);
+        }
         refresh();
     }
+}
+
+/* Pulsación larga: la papelera pasa a ofrecer "olvidar el sensor". */
+static void forget_cb(lv_event_t *e)
+{
+    (void)e;
+    if (sensor_count() == 0) return;
+    confirm_arm(true);
 }
 
 /* -------------------------- Editor de umbrales ---------------------------- */
@@ -572,6 +601,7 @@ static void sensors_open(lv_obj_t *parent)
     lv_obj_set_style_radius(s_reset_btn, 17, 0);
     lv_obj_set_style_bg_color(s_reset_btn, lv_color_hex(0x33445A), 0);
     lv_obj_add_event_cb(s_reset_btn, reset_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(s_reset_btn, forget_cb, LV_EVENT_LONG_PRESSED, NULL);
     s_reset_lbl = lv_label_create(s_reset_btn);
     lv_label_set_text(s_reset_lbl, LV_SYMBOL_TRASH);
     lv_obj_center(s_reset_lbl);

@@ -460,6 +460,17 @@ void sensor_alert_set_rule(const char *id, const sensor_rule_t *r)
              r->hi_on ? "" : "(off) ", r->hi, r->hyst);
 }
 
+void sensor_alert_forget(const char *id)
+{
+    for (int i = 0; i < MAX_RULES; i++) {
+        if (!s_e[i].used || strcmp(s_e[i].id, id) != 0) continue;
+        memset(&s_e[i], 0, sizeof(s_e[i]));
+        rules_save();
+        ESP_LOGI(TAG, "Regla de %s olvidada", id);
+        return;
+    }
+}
+
 sensor_alert_state_t sensor_alert_state(const char *id)
 {
     for (int i = 0; i < MAX_RULES; i++) {

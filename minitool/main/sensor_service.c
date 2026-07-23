@@ -81,6 +81,19 @@ typedef struct {
 static hour_blob_t s_hsaved[MAX_SENSORS];
 static int         s_hsaved_n = 0;
 
+/* Volcado diferido a NVS.
+ *
+ * El récord cambia con cada nuevo min/max: con el RSSI oscilando un par de dBm
+ * eso serían varias escrituras de flash por minuto. Y el histórico horario se
+ * cierra para todos los sensores a la vez, o sea N escrituras del mismo blob
+ * seguidas. En vez de escribir en el momento, se marca sucio y un timer vuelca
+ * como mucho cada FLUSH_MS. Lo que se arriesga es perder hasta 10 s de récord
+ * en un corte de luz, que no vale una flash gastada. */
+#define FLUSH_MS 10000
+static volatile bool      s_rec_dirty   = false;
+static volatile bool      s_hours_dirty = false;
+static esp_timer_handle_t s_flush_timer = NULL;
+
 /* --------------------------- Nombres y unidades ------------------------- */
 
 const char *sensor_leaf(const char *id)
@@ -276,7 +289,7 @@ static void hour_update(sensor_t *s, float f)
             s->h_hist[s->h_head] = s->h_sum / (float)s->h_n;
             s->h_head = (s->h_head + 1) % SENSOR_HIST_H;
             if (s->h_count < SENSOR_HIST_H) s->h_count++;
-            hours_save();
+            s_hours_dirty = true;   /* una sola escritura para todos los sensores */
         }
         s->h_hour = hr;
         s->h_sum  = 0;
@@ -324,7 +337,7 @@ static void record_update(sensor_t *s, float f)
         if (day >= 0 && s->rec_day != day) { s->rec_day = day; changed = true; }
     }
 
-    if (changed) records_save();
+    if (changed) s_rec_dirty = true;   /* lo vuelca flush_cb */
 }
 
 /* ------------------------------ Sensores ------------------------------- */
@@ -384,6 +397,13 @@ static void sensor_cb(const char *topic, int topic_len, const char *data, int da
     ESP_LOGI(TAG, "Sensor %s = %s", id, valbuf);
 }
 
+static void flush_cb(void *arg)
+{
+    (void)arg;
+    if (s_rec_dirty)   { s_rec_dirty   = false; records_save(); }
+    if (s_hours_dirty) { s_hours_dirty = false; hours_save();   }
+}
+
 void sensor_service_init(void)
 {
     static bool started = false;
@@ -391,6 +411,11 @@ void sensor_service_init(void)
     started = true;
     records_load();
     hours_load();
+
+    const esp_timer_create_args_t args = { .callback = flush_cb, .name = "sensor_flush" };
+    if (esp_timer_create(&args, &s_flush_timer) == ESP_OK) {
+        esp_timer_start_periodic(s_flush_timer, (uint64_t)FLUSH_MS * 1000ULL);
+    }
     sensor_alert_init();   /* motor de umbrales (se alimenta desde sensor_cb) */
     mqtt_hub_init();
     mqtt_hub_subscribe(SENSOR_FILTER, sensor_cb, NULL);
@@ -460,6 +485,29 @@ bool sensor_get_record(int idx, float *mn, float *mx, bool *valid)
     return true;
 }
 
+void sensor_forget(int idx)
+{
+    sensor_t *s = nth(idx);
+    if (!s) return;
+
+    char id[ID_MAX];
+    strlcpy(id, s->id, sizeof(id));
+
+    /* Borrar el retenido del broker: si no, el sensor reaparece en cuanto el
+     * minitool se reconecte. Payload vacío + retain = olvidalo. */
+    char topic[SENSOR_ID_MAX + 16];
+    snprintf(topic, sizeof(topic), SENSOR_PREFIX "%s", id);
+    mqtt_hub_publish(topic, "", 1, true);
+
+    sensor_alert_forget(id);            /* su regla y su estado */
+    memset(s, 0, sizeof(*s));           /* libera el slot */
+
+    /* Persistir sin él: records_save/hours_save recorren los sensores vivos. */
+    records_save();
+    hours_save();
+    ESP_LOGI(TAG, "Sensor %s olvidado", id);
+}
+
 void sensor_reset_record(int idx)
 {
     sensor_t *s = nth(idx);
@@ -469,6 +517,6 @@ void sensor_reset_record(int idx)
     s->rec_min = s->rec_max = f;
     s->rec_day = current_day();
     s->rec_valid = true;
-    records_save();
+    records_save();   /* acción del usuario: se guarda ya, sin diferir */
     ESP_LOGI(TAG, "Récord de %s borrado (reinicia en %.1f)", s->id, f);
 }

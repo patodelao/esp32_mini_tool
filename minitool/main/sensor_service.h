@@ -45,6 +45,14 @@ bool sensor_get_record(int i, float *min, float *max, bool *valid);
 /* Borra el récord del sensor i y lo reinicia desde su último valor. */
 void sensor_reset_record(int i);
 
+/* Olvida el sensor i: libera su lugar y borra su récord, su histórico y su
+ * regla de alertas. Además borra el mensaje retenido de su topic en el broker
+ * (payload vacío), porque si no reaparecería en la próxima reconexión.
+ *
+ * Es para limpiar sensores que ya no existen: el "Crudo" que deja una sesión
+ * de calibración, o los fantasmas de un nodo que renombraste. */
+void sensor_forget(int i);
+
 /* --- Nombres y unidades (compartidos por la UI y el motor de alertas) ------ */
 
 /* Magnitud del id: lo que sigue al último '/' ("temp", "suelo", ...). */
