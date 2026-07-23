@@ -14,6 +14,7 @@
 #include "esp_http_client.h"
 #include "cJSON.h"
 #include "esp_log.h"
+#include "nvs.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -23,11 +24,25 @@ static const char *TAG = "weather_svc";
 
 #define MIN_REFRESH_SECONDS 600  /* no re-descargar más seguido que esto */
 
+/* Espera tras un intento fallido. Arranca corta y se va duplicando hasta el
+ * intervalo normal: sin esto, un fallo dejaba al servicio reintentando cada
+ * vez que el watchface refrescaba (~5 s), para siempre. Además de gastar red
+ * y batería, esa tormenta es la mejor forma de que ip-api.com — que limita por
+ * IP — te bloquee y el fallo se vuelva permanente. */
+#define RETRY_FIRST_SECONDS  60
+
+#define GEO_NS   "weather"
+#define GEO_LAT  "lat"
+#define GEO_LON  "lon"
+#define GEO_CITY "city"
+
 static SemaphoreHandle_t s_mutex = NULL;
 static weather_data_t    s_cache;
 static uint32_t          s_generation = 0;
 static volatile bool     s_fetching = false;
-static time_t            s_last_update = 0;
+static time_t            s_last_update = 0;   /* última descarga BUENA */
+static time_t            s_last_try = 0;      /* último intento, salga o no */
+static int               s_retry_s = 0;       /* espera actual tras fallar */
 
 typedef struct { const char *emoji; const char *text; } weather_info_t;
 
@@ -87,6 +102,29 @@ static void publish(const char *city, const char *temp, const char *emoji, const
     xSemaphoreGive(s_mutex);
 }
 
+/* La ubicación se guarda en NVS: cambia poquísimo, y así una caída de
+ * ip-api.com (o su límite por IP) no deja al reloj sin clima. */
+static void geo_load(float *lat, float *lon, char *city, size_t city_size) {
+    nvs_handle_t h;
+    if (nvs_open(GEO_NS, NVS_READONLY, &h) != ESP_OK) return;
+    int32_t v;
+    if (nvs_get_i32(h, GEO_LAT, &v) == ESP_OK) *lat = (float)v / 10000.0f;
+    if (nvs_get_i32(h, GEO_LON, &v) == ESP_OK) *lon = (float)v / 10000.0f;
+    size_t sz = city_size;
+    nvs_get_str(h, GEO_CITY, city, &sz);
+    nvs_close(h);
+}
+
+static void geo_save(float lat, float lon, const char *city) {
+    nvs_handle_t h;
+    if (nvs_open(GEO_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_i32(h, GEO_LAT, (int32_t)(lat * 10000.0f));
+    nvs_set_i32(h, GEO_LON, (int32_t)(lon * 10000.0f));
+    nvs_set_str(h, GEO_CITY, city);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
 static void fetch_weather_task(void *pv) {
     (void)pv;
     char city[32] = "Ubicando...";
@@ -96,9 +134,13 @@ static void fetch_weather_task(void *pv) {
     float lat = 0.0f, lon = 0.0f;
     bool ok = false;
 
+    /* Si ya sabemos dónde estamos, se saltea la geolocalización. */
+    geo_load(&lat, &lon, city, sizeof(city));
+
     char *json = malloc(2048);
     if (json != NULL) {
-        if (fetch_http_to_buffer("http://ip-api.com/json/?fields=lat,lon,city", json, 2048)) {
+        if ((lat == 0.0f && lon == 0.0f) &&
+            fetch_http_to_buffer("http://ip-api.com/json/?fields=lat,lon,city", json, 2048)) {
             cJSON *root = cJSON_Parse(json);
             if (root) {
                 cJSON *jc = cJSON_GetObjectItem(root, "city");
@@ -108,6 +150,7 @@ static void fetch_weather_task(void *pv) {
                     snprintf(city, sizeof(city), "%s", jc->valuestring);
                     lat = jlat->valuedouble;
                     lon = jlon->valuedouble;
+                    geo_save(lat, lon, city);   /* no volver a pedirla */
                 }
                 cJSON_Delete(root);
             }
@@ -140,12 +183,16 @@ static void fetch_weather_task(void *pv) {
         free(json);
     }
 
+    publish(city, temp, emoji, desc);   /* si falló, al menos deja la ciudad */
+
     if (ok) {
-        publish(city, temp, emoji, desc);
         time(&s_last_update);
+        s_retry_s = 0;
     } else {
-        /* Al menos deja la ciudad si la conseguimos, marcando error de red */
-        publish(city, temp, emoji, desc);
+        /* Backoff: 60 s, 2 min, 4 min... hasta el intervalo normal. */
+        s_retry_s = (s_retry_s == 0) ? RETRY_FIRST_SECONDS : s_retry_s * 2;
+        if (s_retry_s > MIN_REFRESH_SECONDS) s_retry_s = MIN_REFRESH_SECONDS;
+        ESP_LOGW(TAG, "Descarga fallida; próximo intento en %d s", s_retry_s);
     }
 
     s_fetching = false;
@@ -165,10 +212,15 @@ void weather_service_refresh(bool force) {
     if (s_fetching) return;
     if (!wifi_manager_is_connected()) return;
 
-    if (!force && s_last_update != 0) {
-        time_t now; time(&now);
-        if (now - s_last_update < MIN_REFRESH_SECONDS) return; /* caché fresca */
+    /* El límite se aplica sobre el último INTENTO, no sobre la última descarga
+     * buena: si se mira s_last_update, un fallo lo deja en 0 y el servicio
+     * reintenta en cada refresco del watchface, o sea cada pocos segundos. */
+    time_t now; time(&now);
+    if (!force && s_last_try != 0) {
+        int wait = (s_retry_s > 0) ? s_retry_s : MIN_REFRESH_SECONDS;
+        if (now - s_last_try < wait) return;
     }
+    s_last_try = now;
 
     s_fetching = true;
     if (xTaskCreate(fetch_weather_task, "weather_fetch", 4096, NULL, 5, NULL) != pdPASS) {
