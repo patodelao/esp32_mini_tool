@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -119,21 +120,65 @@ static void start_sntp_once(void)
     s_sntp_started = true;
 }
 
+/* --- Reintento con espera creciente -----------------------------------------
+ *
+ * Antes se llamaba a esp_wifi_connect() en el acto dentro del propio evento de
+ * desconexion. Con el router caido eso es un bucle apretado: desconecta,
+ * conecta, falla, desconecta... quemando radio y llenando el log. Encima
+ * dispara el "sta is connecting, return error" que se ve al arrancar, porque
+ * se pide conectar mientras ya hay un intento en curso.
+ *
+ * Ahora cada intento se agenda con un timer, y la espera se duplica hasta
+ * medio minuto. Al obtener IP vuelve a empezar de cero. */
+#define RETRY_MIN_MS   1000
+#define RETRY_MAX_MS  30000
+
+static esp_timer_handle_t s_retry_timer = NULL;
+static int s_retry_ms = RETRY_MIN_MS;
+
+static void retry_cb(void *arg)
+{
+    (void)arg;
+    if (!s_should_connect) return;
+    ESP_LOGI(TAG, "Reintentando conexion Wi-Fi");
+    esp_wifi_connect();
+}
+
+static void retry_schedule(void)
+{
+    if (!s_should_connect) return;
+    if (!s_retry_timer) {
+        const esp_timer_create_args_t args = { .callback = retry_cb, .name = "wifi_retry" };
+        if (esp_timer_create(&args, &s_retry_timer) != ESP_OK) return;
+    }
+    esp_timer_stop(s_retry_timer);
+    esp_timer_start_once(s_retry_timer, (uint64_t)s_retry_ms * 1000ULL);
+
+    ESP_LOGI(TAG, "Sin Wi-Fi; proximo intento en %d s", s_retry_ms / 1000);
+    s_retry_ms *= 2;
+    if (s_retry_ms > RETRY_MAX_MS) s_retry_ms = RETRY_MAX_MS;
+}
+
+static void retry_reset(void)
+{
+    s_retry_ms = RETRY_MIN_MS;
+    if (s_retry_timer) esp_timer_stop(s_retry_timer);
+}
+
 static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         if (s_should_connect) esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_connected = false;
-        /* Solo reintentar si el usuario quiere seguir conectado. */
-        if (s_should_connect) {
-            ESP_LOGI(TAG, "Desconectado, reintentando...");
-            esp_wifi_connect();
-        }
+        /* Solo reintentar si el usuario quiere seguir conectado, y con espera:
+         * insistir sin pausa no acelera nada y deja la radio a full. */
+        retry_schedule();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_connected = true;
+        retry_reset();
         start_sntp_once();
     }
 }
@@ -167,7 +212,8 @@ void wifi_manager_init(void)
     /* Si en la última sesión el usuario lo dejó conectado, reconectar automáticamente */
     if (s_should_connect) {
         ESP_LOGI(TAG, "Auto-conectando a red guardada: %s", s_ssid);
-        esp_wifi_connect();
+        /* El propio evento STA_START ya dispara la conexion; pedirla aca
+         * tambien es lo que provocaba el "sta is connecting, return error". */
     }
 }
 
@@ -178,6 +224,7 @@ void wifi_manager_connect(void)
     s_should_connect = true;
     save_credentials(); /* Guardar en memoria estática que queremos auto-conectar */
     ESP_LOGI(TAG, "Conectando a '%s'...", s_ssid);
+    retry_reset();
     esp_wifi_connect();
 }
 
