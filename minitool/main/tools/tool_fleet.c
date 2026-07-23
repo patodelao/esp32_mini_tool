@@ -17,7 +17,7 @@ static lv_obj_t *s_empty = NULL;
 static lv_timer_t *s_poll = NULL;
 static char s_sig[512];
 
-static void add_row(const char *id, bool online, uint32_t age)
+static void add_row(const char *id, bool online, uint32_t age, const char *ip)
 {
     lv_obj_t *lbl = lv_label_create(s_cont);
     lv_label_set_recolor(lbl, true);
@@ -29,8 +29,13 @@ static void add_row(const char *id, bool online, uint32_t age)
     else if (online)      { state = "online";    color = "2ECC71"; }
     else                  { state = "offline";   color = "E74C3C"; }
 
-    char buf[96];
-    snprintf(buf, sizeof(buf), "#DDE6F0 %s#   #%s %s#", id, color, state);
+    /* Segunda línea con la IP (si el nodo la publica): es la que se usa para
+     * actualizarlo por OTA cuando <id>.local no resuelve. */
+    char buf[128];
+    if (ip && ip[0])
+        snprintf(buf, sizeof(buf), "#DDE6F0 %s#   #%s %s#\n#5A6B7A %s#", id, color, state, ip);
+    else
+        snprintf(buf, sizeof(buf), "#DDE6F0 %s#   #%s %s#", id, color, state);
     lv_label_set_text(lbl, buf);
 }
 
@@ -39,8 +44,10 @@ static void rebuild(void)
     lv_obj_clean(s_cont);
     int n = fleet_count();
     for (int i = 0; i < n; i++) {
-        char id[24]; bool online; uint32_t age;
-        if (fleet_get(i, id, sizeof(id), &online, &age)) add_row(id, online, age);
+        char id[24], ip[16]; bool online; uint32_t age;
+        if (!fleet_get(i, id, sizeof(id), &online, &age)) continue;
+        if (!fleet_get_ip(i, ip, sizeof(ip))) ip[0] = '\0';
+        add_row(id, online, age, ip);
     }
     if (s_empty) {
         if (n == 0) lv_obj_clear_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
@@ -54,10 +61,11 @@ static void build_signature(char *out, int size)
     out[0] = '\0';
     int n = fleet_count();
     for (int i = 0; i < n; i++) {
-        char id[24]; bool online; uint32_t age;
+        char id[24], ip[16]; bool online; uint32_t age;
         if (!fleet_get(i, id, sizeof(id), &online, &age)) continue;
+        if (!fleet_get_ip(i, ip, sizeof(ip))) ip[0] = '\0';
         int bucket = (age >= STALE_S) ? 2 : (online ? 1 : 0);
-        int w = snprintf(out + used, size - used, "%s:%d;", id, bucket);
+        int w = snprintf(out + used, size - used, "%s:%d:%s;", id, bucket, ip);
         if (w <= 0 || w >= size - used) break;
         used += w;
     }

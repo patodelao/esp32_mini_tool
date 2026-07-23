@@ -11,12 +11,15 @@
 
 static const char *TAG = "fleet";
 
-#define FLEET_FILTER "labo/nodo/+/status"
+#define FLEET_FILTER    "labo/nodo/+/status"
+#define FLEET_IP_FILTER "labo/nodo/+/ip"
 #define MAX_NODES    12
 #define ID_MAX       24
+#define IP_MAX       16   /* "255.255.255.255" + '\0' */
 
 typedef struct {
     char     id[ID_MAX];
+    char     ip[IP_MAX];  /* vacío si el nodo no la publica */
     bool     online;
     uint64_t last_us;   /* último mensaje (esp_timer_get_time) */
     bool     used;
@@ -73,6 +76,23 @@ static void fleet_cb(const char *topic, int topic_len, const char *data, int dat
     ESP_LOGI(TAG, "Nodo %s -> %s", id, n->online ? "online" : "offline");
 }
 
+/* labo/nodo/<id>/ip -> la IP con la que se llega al nodo (p.ej. para OTA). */
+static void fleet_ip_cb(const char *topic, int topic_len, const char *data, int data_len, void *arg)
+{
+    (void)arg;
+    if (data_len == 0) return;   /* borrado de retenido */
+
+    char id[ID_MAX];
+    if (!parse_node_id(topic, topic_len, id, sizeof(id))) return;
+
+    node_t *n = find_or_add(id);
+    if (!n) return;
+    int len = data_len < IP_MAX - 1 ? data_len : IP_MAX - 1;
+    memcpy(n->ip, data, len);
+    n->ip[len] = '\0';
+    ESP_LOGI(TAG, "Nodo %s -> IP %s", id, n->ip);
+}
+
 void fleet_service_init(void)
 {
     static bool started = false;
@@ -80,7 +100,8 @@ void fleet_service_init(void)
     started = true;
     mqtt_hub_init();
     mqtt_hub_subscribe(FLEET_FILTER, fleet_cb, NULL);
-    ESP_LOGI(TAG, "Fleet suscrito a %s", FLEET_FILTER);
+    mqtt_hub_subscribe(FLEET_IP_FILTER, fleet_ip_cb, NULL);
+    ESP_LOGI(TAG, "Fleet suscrito a %s y %s", FLEET_FILTER, FLEET_IP_FILTER);
 }
 
 int fleet_count(void)
@@ -99,6 +120,21 @@ bool fleet_get(int idx, char *id, int id_size, bool *online, uint32_t *age_s)
             if (id) strlcpy(id, s_nodes[i].id, id_size);
             if (online) *online = s_nodes[i].online;
             if (age_s) *age_s = (uint32_t)((esp_timer_get_time() - s_nodes[i].last_us) / 1000000ULL);
+            return true;
+        }
+        c++;
+    }
+    return false;
+}
+
+bool fleet_get_ip(int idx, char *ip, int ip_size)
+{
+    int c = 0;
+    for (int i = 0; i < MAX_NODES; i++) {
+        if (!s_nodes[i].used) continue;
+        if (c == idx) {
+            if (!s_nodes[i].ip[0]) return false;
+            if (ip) strlcpy(ip, s_nodes[i].ip, ip_size);
             return true;
         }
         c++;

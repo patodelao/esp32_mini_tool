@@ -133,6 +133,7 @@
 #define MQTT_PORT     1883
 
 #define TOPIC_STATUS  "labo/nodo/"   NODE_ID "/status"
+#define TOPIC_IP      "labo/nodo/"   NODE_ID "/ip"    /* para poder actualizarlo por OTA */
 #define TOPIC_TEMP    "labo/sensor/" NODE_ID "/temp"
 #define TOPIC_HUM     "labo/sensor/" NODE_ID "/hum"
 #define TOPIC_SUELO   "labo/sensor/" NODE_ID "/suelo"
@@ -439,6 +440,9 @@ static void wifiMantener() {
 static void mqttAlConectar() {
   Serial.println("MQTT: conectado");
   mqtt.publish(TOPIC_STATUS, "online", true);
+  // La IP queda retenida y visible en la tool Nodos: es la que se le pasa al
+  // OTA cuando el nombre mDNS no resuelve (pasa seguido en Windows).
+  mqtt.publish(TOPIC_IP, WiFi.localIP().toString().c_str(), true);
 #if LIMPIAR_TOPICS_VIEJOS
   /* Payload vacio + retain = borra el mensaje retenido en el broker. */
   mqtt.publish("labo/sensor/" ID_VIEJO "/temp",   "", true);
@@ -492,7 +496,7 @@ static void otaIniciar() {
   ArduinoOTA.onEnd([]() { Serial.println("\nOTA: listo, reiniciando"); });
   ArduinoOTA.onError([](ota_error_t e) { Serial.printf("OTA: error %u\n", e); });
   ArduinoOTA.begin();
-  Serial.println("OTA: activo (pio run -t upload --upload-port <ip del nodo>)");
+  Serial.println("OTA: activo (pio run -e " NODE_ID "_ota -t upload)");
 }
 
 // --- Telemetria de salud ----------------------------------------------------

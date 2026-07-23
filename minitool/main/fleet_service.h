@@ -8,6 +8,10 @@
  *
  * Convención de topic (ajústala en FLEET_FILTER si usas otra):
  *   labo/nodo/<id>/status  ->  "online" | "offline"
+ *   labo/nodo/<id>/ip      ->  "192.168.0.42"   (opcional, retenido)
+ *
+ * La IP es opcional pero práctica: es la que se usa para actualizar el nodo
+ * por OTA cuando el nombre mDNS (<id>.local) no resuelve.
  */
 #pragma once
 
@@ -27,6 +31,9 @@ int fleet_count(void);
  * 'online' = último estado reportado; 'age_s' = segundos desde el último
  * mensaje (útil para marcar "sin señal" si es muy alto). */
 bool fleet_get(int i, char *id, int id_size, bool *online, uint32_t *age_s);
+
+/* IP del nodo i, si la publicó. Devuelve false si no se conoce. */
+bool fleet_get_ip(int i, char *ip, int ip_size);
 
 #ifdef __cplusplus
 }
