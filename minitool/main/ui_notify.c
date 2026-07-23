@@ -11,6 +11,7 @@
  * cuando el actual se cierra (auto-cierre por tiempo o toque del usuario).
  */
 #include "ui_notify.h"
+#include "ui_power.h"
 
 #include "lvgl.h"
 #include "freertos/FreeRTOS.h"
@@ -136,6 +137,11 @@ static void toast_click_cb(lv_event_t *e)
 
 static void show_toast(const notify_item_t *it)
 {
+    /* Un aviso con la pantalla apagada no sirve de nada: encenderla es parte
+     * de notificar. También reinicia la inactividad, así queda tiempo para
+     * leerlo antes de que se vuelva a dormir. */
+    ui_power_wake();
+
     lv_color_t accent = level_color(it->level);
 
     lv_obj_t *card = lv_obj_create(lv_layer_top());

@@ -32,6 +32,14 @@ void bsp_init(void);
 /* Handle del controlador táctil (por si alguna tool lo necesita). */
 esp_lcd_touch_handle_t bsp_touch_handle(void);
 
+/* Brillo del backlight, 0..100 (%). 0 apaga la pantalla sin apagar el panel,
+ * que es lo que usa ui_power para dormirla cuando no la estás mirando.
+ * Está en PWM, así que admite valores intermedios (modo noche). */
+void bsp_backlight_set(int pct);
+
+/* Brillo actual. */
+int bsp_backlight_get(void);
+
 /*
  * Lock/unlock del mutex de LVGL. LVGL NO es thread-safe: cualquier acceso a la
  * API de LVGL desde una task distinta a la de renderizado debe ir entre

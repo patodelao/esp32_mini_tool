@@ -16,6 +16,7 @@
 #include "qmi8658.h"
 #include "ui_menu.h"
 #include "ui_notify.h"
+#include "ui_power.h"
 #include "mqtt_hub.h"
 #include "alert_service.h"
 #include "fleet_service.h"
@@ -121,6 +122,7 @@ void app_main(void)
         lv_obj_set_style_bg_opa(lv_scr_act(), LV_OPA_COVER, LV_PART_MAIN);
 
         ui_notify_init();          /* notificaciones flotantes */
+        ui_power_init();           /* apagado de pantalla + despertar por gesto */
         pedometer_service_init();  /* contador de pasos siempre activo */
         create_main_menu();
         bsp_lvgl_unlock();

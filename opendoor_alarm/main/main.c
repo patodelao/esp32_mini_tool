@@ -68,7 +68,10 @@
  * Nodos (estado) y Sensores (RSSI/duración), y en el bus de alertas multicanal.
  */
 #define DEVICE_ID           "refri"
-#define MQTT_TOPIC_DOOR     "proyectos/casa/refri/puerta"   /* ABIERTO/CERRADO  */
+/* Estado de la puerta. Va bajo labo/nodo/<id>/ y no bajo labo/sensor/<id>/
+ * porque el payload es texto (ABIERTO/CERRADO), no un numero: los sensores del
+ * minitool asumen numeros para graficar y aplicar umbrales. */
+#define MQTT_TOPIC_DOOR     "labo/nodo/" DEVICE_ID "/puerta"  /* ABIERTO/CERRADO */
 #define MQTT_TOPIC_STATUS   "labo/nodo/" DEVICE_ID "/status" /* online/offline   */
 #define MQTT_TOPIC_ALERT    "labo/alerta/" DEVICE_ID         /* JSON multicanal  */
 #define MQTT_TOPIC_RSSI     "labo/sensor/" DEVICE_ID "/rssi" /* dBm              */

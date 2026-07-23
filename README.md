@@ -27,6 +27,7 @@ código del minitool:
 | `labo/nodo/<nodo>/status` | nodo → minitool | tool **Nodos**: online/offline (con Last-Will) |
 | `labo/nodo/<nodo>/ip` | nodo → minitool | tool **Nodos**: IP para actualizar por OTA |
 | `labo/nodo/<nodo>/cmd` | minitool → nodo | tool **Control**: órdenes (`leer`, `reset`, …) |
+| `labo/nodo/<nodo>/<estado>` | nodo → minitool | estados de texto, no numéricos (p. ej. `refri/puerta` → `ABIERTO`) |
 | `labo/config/<nodo>/...` | minitool → nodo | configuración **retenida** (umbrales, intervalos) |
 | `labo/alerta/<origen>` | cualquiera → minitool | bus de alertas: JSON `{origen,nivel,msg}` → notificación flotante |
 

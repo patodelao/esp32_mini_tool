@@ -7,9 +7,12 @@
  *     JSON {"origen","nivel","msg"} y se muestra como notificación flotante.
  *     Es agnóstico del equipo: sumar uno nuevo no requiere tocar el minitool.
  *
- *  2) ESTADO DEL REFRI (`proyectos/casa/refri/puerta`): mantiene abierto/cerrado
+ *  2) ESTADO DEL REFRI (`labo/nodo/refri/puerta`): mantiene abierto/cerrado
  *     para la vista Dashboard (con watchdog). Ya NO emite notificación por aquí:
  *     eso lo hace el bus (niveles aviso/alarma/ok), evitando duplicados.
+ *
+ *     Va bajo labo/nodo/<id>/ y no bajo labo/sensor/<id>/ porque el payload es
+ *     texto, no un número: los sensores del minitool asumen números.
  */
 #include "alert_service.h"
 #include "ui_notify.h"
@@ -75,10 +78,16 @@ typedef struct {
 } door_source_t;
 
 static door_source_t s_refri = {
-    .topic       = "proyectos/casa/refri/puerta",
+    .topic       = "labo/nodo/refri/puerta",
     .active_word = "ABIERTO",
     .watchdog_ms = 12000,
 };
+
+/* Topic anterior, de cuando el refri no seguía la convención labo/. Se sigue
+ * escuchando porque ese nodo no tiene OTA: hasta que lo flashees por cable
+ * sigue publicando acá, y sin esto el Dashboard quedaría ciego. Se puede
+ * borrar esta línea una vez que el refri esté actualizado. */
+#define REFRI_TOPIC_LEGACY "proyectos/casa/refri/puerta"
 
 static void watchdog_cb(void *arg)
 {
@@ -133,8 +142,10 @@ void alert_service_init(void)
 
     mqtt_hub_init();
     mqtt_hub_subscribe(ALERT_BUS_FILTER, alert_bus_cb, NULL);       /* multicanal */
-    mqtt_hub_subscribe(s_refri.topic, door_cb, &s_refri);          /* estado refri */
-    ESP_LOGI(TAG, "Alertas: bus %s + estado %s", ALERT_BUS_FILTER, s_refri.topic);
+    mqtt_hub_subscribe(s_refri.topic, door_cb, &s_refri);           /* estado refri */
+    mqtt_hub_subscribe(REFRI_TOPIC_LEGACY, door_cb, &s_refri);      /* topic viejo */
+    ESP_LOGI(TAG, "Alertas: bus %s + estado %s (y %s)",
+             ALERT_BUS_FILTER, s_refri.topic, REFRI_TOPIC_LEGACY);
 }
 
 bool alert_service_refri_open(void)     { return s_refri.active; }

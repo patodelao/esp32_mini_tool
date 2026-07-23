@@ -14,7 +14,7 @@ Proyecto ESP-IDF para alarma de puerta de refrigerador con bajo consumo.
 
 1. Inicializa GPIO, buzzer y LED.
 2. Conecta a Wi-Fi y a MQTT (`mqtt://broker.hivemq.com`).
-3. Si la puerta está abierta al arrancar, publica `ABIERTO` en `proyectos/casa/refri/puerta` (QoS 1).
+3. Si la puerta está abierta al arrancar, publica `ABIERTO` en `labo/nodo/refri/puerta` (QoS 1).
 4. Mientras la puerta siga abierta:
    - desde los 20 s: LED alternando rojo/verde.
    - desde los 30 s: buzzer intermitente sincronizado con el parpadeo.
@@ -31,11 +31,20 @@ bus de alertas multicanal, sin cambios del lado del minitool.
 
 | Topic | Payload | Uso | Retain |
 |---|---|---|---|
-| `proyectos/casa/refri/puerta` | `ABIERTO` / `CERRADO` | Alerta + Dashboard (compat.) | no |
+| `labo/nodo/refri/puerta` | `ABIERTO` / `CERRADO` | Dashboard del minitool | no |
 | `labo/nodo/refri/status` | `online` / `offline` | Tool **Nodos** (estado) | sí |
 | `labo/alerta/refri` | `{"origen","nivel","msg"}` | Bus de **alertas multicanal** | no |
 | `labo/sensor/refri/rssi` | dBm | Tool **Sensores** (señal Wi-Fi) | sí |
 | `labo/sensor/refri/abierta_seg` | segundos | Tool **Sensores** (duración de la apertura) | sí |
+
+> El estado de la puerta va bajo `labo/nodo/` y no bajo `labo/sensor/` porque
+> el payload es texto (`ABIERTO`/`CERRADO`), no un número: los sensores del
+> minitool asumen números para graficar y aplicar umbrales.
+>
+> Antes se publicaba en `proyectos/casa/refri/puerta`. El minitool sigue
+> escuchando ese topic viejo por compatibilidad (este nodo no tiene OTA, así
+> que hasta que lo flashees por cable sigue usándolo); se puede quitar de
+> `alert_service.c` una vez actualizado.
 
 ### Estado online/offline (importante)
 

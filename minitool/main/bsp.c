@@ -13,6 +13,7 @@
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "driver/gpio.h"
+#include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "driver/i2c.h"
 #include "esp_lcd_panel_io.h"
@@ -29,7 +30,7 @@ static const char *TAG = "bsp";
 #define PIN_LCD_DC    8
 #define PIN_LCD_RST   14
 #define PIN_LCD_CS    9
-#define PIN_BK_LIGHT  2
+#define PIN_BK_LIGHT  2   /* backlight, manejado por PWM (LEDC) */
 #define PIN_TOUCH_RST 13
 #define PIN_TOUCH_INT 5
 
@@ -168,11 +169,59 @@ static void touch_init(void)
     ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_cst816s(io, &cfg, &s_tp));
 }
 
+/* --- Backlight por PWM ----------------------------------------------------
+ *
+ * Antes era un GPIO on/off y quedaba encendido siempre. Con LEDC se puede
+ * atenuar y, sobre todo, apagar la pantalla cuando no la estás mirando (lo
+ * hace ui_power), que es de donde sale casi todo el consumo. */
+#define BK_LEDC_TIMER   LEDC_TIMER_0
+#define BK_LEDC_CHANNEL LEDC_CHANNEL_0
+#define BK_LEDC_BITS    LEDC_TIMER_10_BIT
+#define BK_LEDC_MAX     ((1 << 10) - 1)
+
+static int s_bk_pct = 100;
+
+void bsp_backlight_set(int pct)
+{
+    if (pct < 0)   pct = 0;
+    if (pct > 100) pct = 100;
+    s_bk_pct = pct;
+
+    uint32_t duty = ((uint32_t)BK_LEDC_MAX * (uint32_t)pct) / 100;
+#if LCD_BK_LIGHT_ON_LEVEL == 0
+    duty = BK_LEDC_MAX - duty;   /* backlight activo en bajo */
+#endif
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, BK_LEDC_CHANNEL, duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, BK_LEDC_CHANNEL);
+}
+
+int bsp_backlight_get(void) { return s_bk_pct; }
+
+static void backlight_init(void)
+{
+    ledc_timer_config_t timer = {
+        .speed_mode      = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = BK_LEDC_BITS,
+        .timer_num       = BK_LEDC_TIMER,
+        .freq_hz         = 5000,
+        .clk_cfg         = LEDC_AUTO_CLK,
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&timer));
+
+    ledc_channel_config_t ch = {
+        .gpio_num   = PIN_BK_LIGHT,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel    = BK_LEDC_CHANNEL,
+        .timer_sel  = BK_LEDC_TIMER,
+        .duty       = 0,
+        .hpoint     = 0,
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ch));
+}
+
 static esp_lcd_panel_handle_t lcd_init(lv_disp_drv_t *disp_drv)
 {
-    /* Backlight */
-    gpio_config_t bk = {.mode = GPIO_MODE_OUTPUT, .pin_bit_mask = 1ULL << PIN_BK_LIGHT};
-    ESP_ERROR_CHECK(gpio_config(&bk));
+    backlight_init();
 
     /* Bus SPI */
     spi_bus_config_t buscfg = {
@@ -214,7 +263,7 @@ static esp_lcd_panel_handle_t lcd_init(lv_disp_drv_t *disp_drv)
     ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel, true, false));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel, true));
 
-    gpio_set_level(PIN_BK_LIGHT, LCD_BK_LIGHT_ON_LEVEL);
+    bsp_backlight_set(100);
     return panel;
 }
 
