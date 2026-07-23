@@ -2,6 +2,7 @@
  * mqtt_hub.c — Implementación del cliente MQTT compartido.
  */
 #include "mqtt_hub.h"
+#include "self_node.h"   /* topic del last-will */
 
 #include "mqtt_client.h"
 #include "esp_log.h"
@@ -83,7 +84,18 @@ static void mqtt_event_handler(void *args, esp_event_base_t base, int32_t event_
 void mqtt_hub_init(void)
 {
     if (s_client) return;
-    esp_mqtt_client_config_t cfg = { .broker.address.uri = MQTT_BROKER_URI };
+    /* Last-Will: si el minitool se cuelga o pierde la red sin despedirse, el
+     * broker publica "offline" por él, igual que hacen los nodos. Sin esto, el
+     * propio reloj figuraría online para siempre en su tool Nodos. */
+    esp_mqtt_client_config_t cfg = {
+        .broker.address.uri = MQTT_BROKER_URI,
+        .session.last_will = {
+            .topic  = SELF_NODE_STATUS_TOPIC,
+            .msg    = "offline",
+            .qos    = 1,
+            .retain = 1,
+        },
+    };
     s_client = esp_mqtt_client_init(&cfg);
     if (!s_client) {
         ESP_LOGE(TAG, "No se pudo inicializar el cliente MQTT");

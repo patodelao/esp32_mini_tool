@@ -21,6 +21,7 @@
 #include "alert_service.h"
 #include "fleet_service.h"
 #include "sensor_service.h"
+#include "self_node.h"
 #include "weather_service.h"
 #include "pedometer_service.h"
 
@@ -140,6 +141,9 @@ void app_main(void)
 
     /* Lecturas de sensores del home-lab (tool Sensores). */
     sensor_service_init();
+
+    /* El propio minitool se publica como un nodo mas del home-lab. */
+    self_node_init();
 
     /* Servicio de clima con caché compartida (tool Clima + screensaver). */
     weather_service_init();
