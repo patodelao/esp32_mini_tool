@@ -9,12 +9,14 @@
  *   - se persiste en NVS (blob) para sobrevivir reinicios/cortes de luz.
  */
 #include "sensor_service.h"
+#include "sensor_alert.h"
 #include "mqtt_hub.h"
 
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "nvs.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
@@ -23,8 +25,10 @@ static const char *TAG = "sensor_svc";
 
 #define SENSOR_FILTER "labo/sensor/#"
 #define SENSOR_PREFIX "labo/sensor/"
-#define MAX_SENSORS   8
-#define ID_MAX        32
+/* Un solo nodo puede traer 6 topics (temp, hum, suelo, rssi, uptime, heap),
+ * así que 8 quedaba corto en cuanto hay dos nodos. */
+#define MAX_SENSORS   16
+#define ID_MAX        SENSOR_ID_MAX
 #define VAL_MAX       16
 
 #define REC_NS   "sensrec"   /* namespace NVS del récord */
@@ -57,6 +61,67 @@ typedef struct {
 
 static rec_blob_t s_saved[MAX_SENSORS];
 static int        s_saved_n = 0;
+
+/* --------------------------- Nombres y unidades ------------------------- */
+
+const char *sensor_leaf(const char *id)
+{
+    const char *slash = strrchr(id, '/');
+    return slash ? slash + 1 : id;
+}
+
+const char *sensor_unit(const char *id)
+{
+    const char *leaf = sensor_leaf(id);
+    if (strcmp(leaf, "temp")  == 0) return "\xC2\xB0" "C";  /* °C (UTF-8, la fuente incluye 0xB0) */
+    if (strcmp(leaf, "hum")   == 0) return "%";
+    if (strcmp(leaf, "suelo") == 0) return "%";
+    if (strcmp(leaf, "rssi")   == 0) return "dBm";
+    if (strcmp(leaf, "uptime") == 0) return "min";
+    if (strcmp(leaf, "heap")   == 0) return "kB";
+    if (strcmp(leaf, "abierta_seg") == 0) return "s";
+    return "";
+}
+
+/* Nombre legible del nodo (parte del id antes de '/'). Editá la tabla al
+ * agregar nodos; si no está, se muestra el id crudo. */
+static const char *node_name(const char *node)
+{
+    static const struct { const char *id; const char *name; } M[] = {
+        { "pieza", "Pieza" },
+        { "refri", "Refri" },
+    };
+    for (unsigned i = 0; i < sizeof(M) / sizeof(M[0]); i++)
+        if (strcmp(M[i].id, node) == 0) return M[i].name;
+    return node;
+}
+
+/* Nombre legible de la magnitud (parte tras '/'). */
+static const char *mag_name(const char *leaf)
+{
+    if (strcmp(leaf, "temp")  == 0) return "Temp";
+    if (strcmp(leaf, "hum")   == 0) return "Hum";
+    if (strcmp(leaf, "suelo") == 0) return "Suelo";
+    if (strcmp(leaf, "suelo_raw") == 0) return "Crudo";   /* ADC, en calibracion */
+    if (strcmp(leaf, "rssi")   == 0) return "Wifi";
+    if (strcmp(leaf, "uptime") == 0) return "Encendido";
+    if (strcmp(leaf, "heap")   == 0) return "RAM";
+    if (strcmp(leaf, "abierta_seg") == 0) return "Abierta";
+    return leaf;
+}
+
+void sensor_friendly_name(const char *id, char *out, int out_size)
+{
+    const char *slash = strrchr(id, '/');
+    if (!slash) { snprintf(out, out_size, "%s", id); return; }
+
+    char node[24];
+    int nlen = (int)(slash - id);
+    if (nlen >= (int)sizeof(node)) nlen = (int)sizeof(node) - 1;
+    memcpy(node, id, nlen);
+    node[nlen] = '\0';
+    snprintf(out, out_size, "%s %s", mag_name(slash + 1), node_name(node));
+}
 
 /* ------------------------------- Tiempo -------------------------------- */
 
@@ -195,6 +260,7 @@ static void sensor_cb(const char *topic, int topic_len, const char *data, int da
     if (s->count < SENSOR_HIST) s->count++;
     s->last_us = esp_timer_get_time();
     record_update(s, f);
+    sensor_alert_on_value(id, f);   /* umbrales / histéresis / notificaciones */
     ESP_LOGI(TAG, "Sensor %s = %s", id, valbuf);
 }
 
@@ -204,6 +270,7 @@ void sensor_service_init(void)
     if (started) return;
     started = true;
     records_load();
+    sensor_alert_init();   /* motor de umbrales (se alimenta desde sensor_cb) */
     mqtt_hub_init();
     mqtt_hub_subscribe(SENSOR_FILTER, sensor_cb, NULL);
     ESP_LOGI(TAG, "Sensores suscritos a %s", SENSOR_FILTER);

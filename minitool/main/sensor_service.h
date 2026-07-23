@@ -17,7 +17,8 @@
 extern "C" {
 #endif
 
-#define SENSOR_HIST 30
+#define SENSOR_HIST   30
+#define SENSOR_ID_MAX 32
 
 void sensor_service_init(void);
 
@@ -36,6 +37,18 @@ bool sensor_get_record(int i, float *min, float *max, bool *valid);
 
 /* Borra el récord del sensor i y lo reinicia desde su último valor. */
 void sensor_reset_record(int i);
+
+/* --- Nombres y unidades (compartidos por la UI y el motor de alertas) ------ */
+
+/* Magnitud del id: lo que sigue al último '/' ("temp", "suelo", ...). */
+const char *sensor_leaf(const char *id);
+
+/* Unidad inferida de la magnitud ("\xC2\xB0C", "%", "dBm", "s" o ""). */
+const char *sensor_unit(const char *id);
+
+/* Nombre legible: "pieza/temp" -> "Temp Pieza". ASCII: la fuente del display
+ * no tiene acentos ni ñ. */
+void sensor_friendly_name(const char *id, char *out, int out_size);
 
 #ifdef __cplusplus
 }

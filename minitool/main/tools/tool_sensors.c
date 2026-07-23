@@ -2,34 +2,35 @@
  * tool_sensors.c — Visor de sensores del home-lab (MQTT).
  *
  * Muestra, para el sensor seleccionado:
- *   - id del topic (lo que sigue a "labo/sensor/", p.ej. "pieza/temp")
- *   - valor actual con unidad inferida del topic (°C, %, dBm, s)
+ *   - nombre legible ("Suelo Pieza")
+ *   - valor actual con unidad inferida del topic (°C, %, dBm, s); se colorea
+ *     rojo si está fuera de los umbrales y gris si el sensor dejó de publicar
  *   - récord del día: min / max acumulados (reinicio a medianoche o manual)
  *   - gráfico del histórico corto
- *   - antigüedad de la última lectura ("hace 5 s"); si el sensor dejó de
- *     publicar, el valor se atenúa y el pie se pone en ámbar ("viejo").
+ *   - pie: antigüedad de la última lectura, o el motivo de la alerta si la hay
  *
  * Botones inferiores:
  *   - ciclar (>): pasa al siguiente sensor.
- *   - engranaje: solo en el sensor de suelo; abre un overlay para fijar el
- *     umbral de riego (%), lo guarda en NVS y lo publica retenido en
- *     labo/config/<nodo>/suelo/umbral para que el ESP8266 alerte solo.
+ *   - engranaje: abre el editor de umbrales del sensor (min / max, y para el
+ *     suelo también cada cuánto mide el nodo). Se guardan en NVS vía
+ *     sensor_alert; para el suelo, además se publican retenidos en
+ *     labo/config/<nodo>/suelo/{umbral,histeresis,intervalo} para que el
+ *     ESP8266 alerte solo aunque el minitool esté apagado.
  *   - papelera: borra el récord del día del sensor actual. Pide confirmación
  *     (dos toques) para evitar borrados accidentales.
  */
 #include "tool.h"
 #include "sensor_service.h"
+#include "sensor_alert.h"
 #include "mqtt_hub.h"
-
-#include "nvs.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
 
-/* Sobre esta antigüedad (s) sin actualizar, el sensor se considera "viejo".
- * El nodo pieza publica cada 10 s; 60 s deja margen para varios ciclos. */
-#define STALE_S 60
+/* Cuándo se considera "viejo" un sensor sale de sensor_alert_stale_limit():
+ * depende del intervalo de muestreo configurado, así un sensor que mide cada
+ * 10 min no aparece como caído a los 2 minutos. */
 
 static lv_obj_t *s_id_lbl = NULL;
 static lv_obj_t *s_val_lbl = NULL;
@@ -40,67 +41,21 @@ static lv_obj_t *s_foot_lbl = NULL;    /* índice + antigüedad */
 static lv_obj_t *s_empty = NULL;
 static lv_obj_t *s_reset_btn = NULL;
 static lv_obj_t *s_reset_lbl = NULL;
-static lv_obj_t *s_gear_btn = NULL;    /* abre el editor de umbral (solo suelo) */
-static lv_obj_t *s_ovl = NULL;         /* overlay editor de umbral */
-static lv_obj_t *s_ovl_val = NULL;
+static lv_obj_t *s_gear_btn = NULL;    /* abre el editor de umbrales */
+static lv_obj_t *s_ovl = NULL;         /* overlay editor de umbrales */
+static lv_obj_t *s_ovl_lo = NULL;      /* fila del mínimo */
+static lv_obj_t *s_ovl_hi = NULL;      /* fila del máximo */
+static lv_obj_t *s_ovl_iv = NULL;      /* fila del intervalo (solo suelo) */
 static lv_timer_t *s_poll = NULL;
 static lv_timer_t *s_confirm_tmr = NULL;
 static bool s_confirm = false;         /* esperando 2º toque de borrado */
 static int s_sel = 0;
-static int s_umbral = 20;              /* % umbral de riego (persistido en NVS) */
-static char s_cfg_topic[64];           /* topic de config del sensor mostrado */
 
-/* Unidad inferida de la última componente del id del topic. */
-static const char *unit_for(const char *id)
-{
-    const char *slash = strrchr(id, '/');
-    const char *leaf = slash ? slash + 1 : id;
-    if (strcmp(leaf, "temp") == 0) return "\xC2\xB0" "C";  /* °C (UTF-8, la fuente incluye 0xB0) */
-    if (strcmp(leaf, "hum")  == 0) return "%";
-    if (strcmp(leaf, "suelo") == 0) return "%";
-    if (strcmp(leaf, "rssi") == 0) return "dBm";
-    if (strcmp(leaf, "abierta_seg") == 0) return "s";
-    return "";
-}
-
-/* Nombre legible del nodo (parte del id antes de '/'). Editá la tabla al
- * agregar nodos; si no está, se muestra el id crudo. */
-static const char *node_name(const char *node)
-{
-    static const struct { const char *id; const char *name; } M[] = {
-        { "pieza", "Pieza" },
-        { "refri", "Refri" },
-    };
-    for (unsigned i = 0; i < sizeof(M) / sizeof(M[0]); i++)
-        if (strcmp(M[i].id, node) == 0) return M[i].name;
-    return node;
-}
-
-/* Nombre legible de la magnitud (parte tras '/'). ASCII only: la fuente no
- * tiene acentos ni ñ. */
-static const char *mag_name(const char *leaf)
-{
-    if (strcmp(leaf, "temp")  == 0) return "Temp";
-    if (strcmp(leaf, "hum")   == 0) return "Hum";
-    if (strcmp(leaf, "suelo") == 0) return "Suelo";
-    if (strcmp(leaf, "rssi")  == 0) return "Wifi";
-    if (strcmp(leaf, "abierta_seg") == 0) return "Abierta";
-    return leaf;
-}
-
-/* Compone "<Magnitud> <Nodo>", p.ej. "pieza/temp" -> "Temp Pieza". */
-static void friendly_name(const char *id, char *out, int out_size)
-{
-    const char *slash = strrchr(id, '/');
-    if (!slash) { snprintf(out, out_size, "%s", id); return; }
-
-    char node[24];
-    int nlen = (int)(slash - id);
-    if (nlen >= (int)sizeof(node)) nlen = (int)sizeof(node) - 1;
-    memcpy(node, id, nlen);
-    node[nlen] = '\0';
-    snprintf(out, out_size, "%s %s", mag_name(slash + 1), node_name(node));
-}
+/* Estado del editor de umbrales abierto */
+static char          s_ovl_id[SENSOR_ID_MAX];
+static sensor_rule_t s_edit;
+static float s_step = 1, s_rmin = -100, s_rmax = 100;
+static float s_lo_last = 0, s_hi_last = 0;   /* para volver a activar un límite */
 
 /* "hace 5 s" / "hace 2 min" / "hace 1 h" en un buffer del llamador. */
 static void fmt_age(uint32_t age_s, char *out, int out_size)
@@ -154,93 +109,198 @@ static void reset_cb(lv_event_t *e)
     }
 }
 
-/* ----------------------- Umbral de riego (config) ------------------------- */
+/* -------------------------- Editor de umbrales ---------------------------- */
 
 static bool is_soil(const char *id)
 {
-    const char *slash = strrchr(id, '/');
-    const char *leaf = slash ? slash + 1 : id;
-    return strcmp(leaf, "suelo") == 0;
+    return strcmp(sensor_leaf(id), "suelo") == 0;
 }
 
-static void umbral_load(void)
+/* Publica la config del suelo (retenida) para que el nodo alerte por su cuenta
+ * aunque el minitool esté apagado:
+ * labo/config/<nodo>/suelo/{umbral,histeresis,intervalo}. */
+static void publish_soil_cfg(const char *id, const sensor_rule_t *r)
 {
-    nvs_handle_t h;
-    if (nvs_open("sensor", NVS_READONLY, &h) == ESP_OK) {
-        int32_t v;
-        if (nvs_get_i32(h, "umbral_riego", &v) == ESP_OK && v >= 5 && v <= 95)
-            s_umbral = (int)v;
-        nvs_close(h);
-    }
-}
-
-static void umbral_save(void)
-{
-    nvs_handle_t h;
-    if (nvs_open("sensor", NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_i32(h, "umbral_riego", (int32_t)s_umbral);
-        nvs_commit(h);
-        nvs_close(h);
-    }
-}
-
-static void ovl_refresh_val(void)
-{
-    if (s_ovl_val) lv_label_set_text_fmt(s_ovl_val, "%d %%", s_umbral);
-}
-
-static void ovl_close(void)
-{
-    if (s_ovl) { lv_obj_del(s_ovl); s_ovl = NULL; s_ovl_val = NULL; }
-}
-
-static void ovl_minus_cb(lv_event_t *e)
-{
-    (void)e;
-    s_umbral -= 5; if (s_umbral < 5) s_umbral = 5;
-    ovl_refresh_val();
-}
-
-static void ovl_plus_cb(lv_event_t *e)
-{
-    (void)e;
-    s_umbral += 5; if (s_umbral > 95) s_umbral = 95;
-    ovl_refresh_val();
-}
-
-static void refresh(void);
-
-static void ovl_ok_cb(lv_event_t *e)
-{
-    (void)e;
-    umbral_save();
-    char v[8];
-    snprintf(v, sizeof(v), "%d", s_umbral);
-    /* Config retenida: el nodo la recibe al conectar (incluso tras reiniciar). */
-    mqtt_hub_publish(s_cfg_topic, v, 1, true);
-    ovl_close();
-    refresh();
-}
-
-/* Abre el overlay editor de umbral para el sensor de suelo mostrado. */
-static void gear_cb(lv_event_t *e)
-{
-    (void)e;
-    if (s_ovl) return;
-    if (sensor_count() == 0) return;
-
-    char id[32];
-    sensor_get(s_sel, id, sizeof(id), NULL, 0, NULL);
-    if (!is_soil(id)) return;
-
-    /* topic labo/config/<nodo>/suelo/umbral a partir del id "<nodo>/suelo" */
     char node[24];
     const char *slash = strrchr(id, '/');
     int nlen = slash ? (int)(slash - id) : 0;
     if (nlen >= (int)sizeof(node)) nlen = (int)sizeof(node) - 1;
     memcpy(node, id, nlen);
     node[nlen] = '\0';
-    snprintf(s_cfg_topic, sizeof(s_cfg_topic), "labo/config/%s/suelo/umbral", node);
+
+    char topic[72], v[12];
+
+    /* Umbral 0 = el nodo no vigila (el usuario apagó el mínimo). */
+    snprintf(topic, sizeof(topic), "labo/config/%s/suelo/umbral", node);
+    snprintf(v, sizeof(v), "%.0f", r->lo_on ? r->lo : 0.0f);
+    mqtt_hub_publish(topic, v, 1, true);
+
+    snprintf(topic, sizeof(topic), "labo/config/%s/suelo/histeresis", node);
+    snprintf(v, sizeof(v), "%.0f", r->hyst);
+    mqtt_hub_publish(topic, v, 1, true);
+
+    snprintf(topic, sizeof(topic), "labo/config/%s/suelo/intervalo", node);
+    snprintf(v, sizeof(v), "%u", (unsigned)r->sample_s);
+    mqtt_hub_publish(topic, v, 1, true);
+}
+
+/* Intervalos ofrecidos para medir el suelo. El suelo cambia en horas, así que
+ * medir cada pocos minutos alcanza y de paso la sonda se energiza menos (dura
+ * más) y hay menos tráfico MQTT. */
+static const uint16_t s_intervals[] = { 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600 };
+#define INTERVAL_COUNT (sizeof(s_intervals) / sizeof(s_intervals[0]))
+
+/* Índice del intervalo guardado (el más cercano por debajo). */
+static int interval_index(uint16_t s)
+{
+    int best = 1;   /* 10 s, el que trae el nodo de fábrica */
+    for (int i = 0; i < (int)INTERVAL_COUNT; i++) if (s_intervals[i] <= s) best = i;
+    return best;
+}
+
+/* "cada 30 s" / "cada 5 min" / "cada 1 h" */
+static void fmt_interval(uint16_t s, char *out, int out_size)
+{
+    if (s < 60)         snprintf(out, out_size, "cada %u s", (unsigned)s);
+    else if (s < 3600)  snprintf(out, out_size, "cada %u min", (unsigned)(s / 60));
+    else                snprintf(out, out_size, "cada %u h", (unsigned)(s / 3600));
+}
+
+/* Texto de una fila: "Min  25 %" o "Min  --" si ese límite está apagado. */
+static void ovl_row_text(lv_obj_t *lbl, const char *tag, bool on, float v)
+{
+    if (!lbl) return;
+    char b[32];
+    if (on) snprintf(b, sizeof(b), "%s  %.0f %s", tag, v, sensor_unit(s_ovl_id));
+    else    snprintf(b, sizeof(b), "%s  --", tag);
+    lv_label_set_text(lbl, b);
+    lv_obj_set_style_text_color(lbl, on ? lv_color_white() : lv_color_hex(0x5A6B7A), 0);
+}
+
+static void ovl_refresh(void)
+{
+    ovl_row_text(s_ovl_lo, "Min", s_edit.lo_on, s_edit.lo);
+    ovl_row_text(s_ovl_hi, "Max", s_edit.hi_on, s_edit.hi);
+    if (s_ovl_iv) {
+        char b[24];
+        fmt_interval(s_edit.sample_s, b, sizeof(b));
+        lv_label_set_text(s_ovl_iv, b);
+    }
+}
+
+static void ovl_close(void)
+{
+    if (s_ovl) {
+        lv_obj_del(s_ovl);
+        s_ovl = NULL;
+        s_ovl_lo = s_ovl_hi = s_ovl_iv = NULL;
+    }
+}
+
+static void ovl_iv_bump(int dir)
+{
+    int i = interval_index(s_edit.sample_s) + dir;
+    if (i < 0) i = 0;
+    if (i >= (int)INTERVAL_COUNT) i = INTERVAL_COUNT - 1;
+    s_edit.sample_s = s_intervals[i];
+    ovl_refresh();
+}
+
+static void ovl_iv_minus_cb(lv_event_t *e) { (void)e; ovl_iv_bump(-1); }
+static void ovl_iv_plus_cb (lv_event_t *e) { (void)e; ovl_iv_bump(+1); }
+
+/* Ajusta un límite. dir = -1 / +1. Bajar del piso del rango lo apaga; subir
+ * desde apagado lo vuelve a encender en su último valor. */
+static void ovl_bump(bool is_lo, int dir)
+{
+    bool  *on   = is_lo ? &s_edit.lo_on : &s_edit.hi_on;
+    float *val  = is_lo ? &s_edit.lo    : &s_edit.hi;
+    float *last = is_lo ? &s_lo_last    : &s_hi_last;
+
+    if (!*on) {
+        if (dir > 0) { *on = true; *val = *last; }   /* reactivar */
+        ovl_refresh();
+        return;
+    }
+    float nv = *val + dir * s_step;
+    if (nv < s_rmin) {           /* un paso más abajo del piso: apagar */
+        *last = *val;
+        *on = false;
+    } else if (nv > s_rmax) {
+        nv = s_rmax;
+        *val = nv;
+    } else {
+        *val = nv;
+    }
+    /* Mantener min < max si ambos están activos. */
+    if (s_edit.lo_on && s_edit.hi_on && s_edit.lo > s_edit.hi - s_step) {
+        if (is_lo) s_edit.lo = s_edit.hi - s_step;
+        else       s_edit.hi = s_edit.lo + s_step;
+    }
+    ovl_refresh();
+}
+
+static void ovl_lo_minus_cb(lv_event_t *e) { (void)e; ovl_bump(true,  -1); }
+static void ovl_lo_plus_cb (lv_event_t *e) { (void)e; ovl_bump(true,  +1); }
+static void ovl_hi_minus_cb(lv_event_t *e) { (void)e; ovl_bump(false, -1); }
+static void ovl_hi_plus_cb (lv_event_t *e) { (void)e; ovl_bump(false, +1); }
+
+static void refresh(void);
+
+static void ovl_ok_cb(lv_event_t *e)
+{
+    (void)e;
+    sensor_alert_set_rule(s_ovl_id, &s_edit);
+    if (is_soil(s_ovl_id)) publish_soil_cfg(s_ovl_id, &s_edit);
+    ovl_close();
+    refresh();
+}
+
+/* Crea una fila "[-]  Tag valor  [+]" centrada en y. Devuelve el label. */
+static lv_obj_t *ovl_make_row(lv_obj_t *parent, int y,
+                              lv_event_cb_t minus_cb, lv_event_cb_t plus_cb)
+{
+    lv_obj_t *bm = lv_btn_create(parent);
+    lv_obj_set_size(bm, 40, 36);
+    lv_obj_align(bm, LV_ALIGN_TOP_MID, -82, y - 18);
+    lv_obj_set_style_radius(bm, 18, 0);
+    lv_obj_set_style_bg_color(bm, lv_color_hex(0x33445A), 0);
+    lv_obj_add_event_cb(bm, minus_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *bml = lv_label_create(bm);
+    lv_label_set_text(bml, LV_SYMBOL_MINUS);
+    lv_obj_center(bml);
+
+    lv_obj_t *bp = lv_btn_create(parent);
+    lv_obj_set_size(bp, 40, 36);
+    lv_obj_align(bp, LV_ALIGN_TOP_MID, 82, y - 18);
+    lv_obj_set_style_radius(bp, 18, 0);
+    lv_obj_set_style_bg_color(bp, lv_color_hex(0x33445A), 0);
+    lv_obj_add_event_cb(bp, plus_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *bpl = lv_label_create(bp);
+    lv_label_set_text(bpl, LV_SYMBOL_PLUS);
+    lv_obj_center(bpl);
+
+    lv_obj_t *lbl = lv_label_create(parent);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
+    lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, y - 10);
+    return lbl;
+}
+
+/* Abre el editor de umbrales del sensor mostrado. */
+static void gear_cb(lv_event_t *e)
+{
+    (void)e;
+    if (s_ovl) return;
+    if (sensor_count() == 0) return;
+
+    sensor_get(s_sel, s_ovl_id, sizeof(s_ovl_id), NULL, 0, NULL);
+    sensor_alert_get_rule(s_ovl_id, &s_edit);
+    sensor_alert_edit_hints(s_ovl_id, &s_step, &s_rmin, &s_rmax);
+
+    /* Valor al que volver si el usuario apaga y vuelve a encender un límite
+     * (la regla conserva el número aunque el límite esté apagado). */
+    s_lo_last = s_edit.lo;
+    s_hi_last = s_edit.hi;
 
     s_ovl = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(s_ovl);
@@ -250,42 +310,44 @@ static void gear_cb(lv_event_t *e)
     lv_obj_set_style_bg_opa(s_ovl, LV_OPA_COVER, 0);
     lv_obj_clear_flag(s_ovl, LV_OBJ_FLAG_SCROLLABLE);
 
+    bool soil = is_soil(s_ovl_id);
+
     lv_obj_t *t = lv_label_create(s_ovl);
-    lv_obj_set_style_text_font(t, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(t, lv_color_hex(0x8FA8C8), 0);
-    lv_label_set_text(t, "Umbral riego");
-    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 40);
+    lv_obj_set_style_text_font(t, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(t, lv_color_hex(0x7F8C8D), 0);
+    lv_label_set_text(t, "Umbrales");
+    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, soil ? 18 : 24);
 
-    s_ovl_val = lv_label_create(s_ovl);
-    lv_obj_set_style_text_font(s_ovl_val, &lv_font_montserrat_48, 0);
-    lv_obj_set_style_text_color(s_ovl_val, lv_color_white(), 0);
-    lv_obj_align(s_ovl_val, LV_ALIGN_CENTER, 0, -30);
-    ovl_refresh_val();
+    lv_obj_t *nm = lv_label_create(s_ovl);
+    lv_obj_set_style_text_font(nm, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(nm, lv_color_hex(0x8FA8C8), 0);
+    char name[40];
+    sensor_friendly_name(s_ovl_id, name, sizeof(name));
+    lv_label_set_text(nm, name);
+    lv_obj_align(nm, LV_ALIGN_TOP_MID, 0, soil ? 36 : 44);
 
-    lv_obj_t *bm = lv_btn_create(s_ovl);
-    lv_obj_set_size(bm, 56, 56);
-    lv_obj_align(bm, LV_ALIGN_CENTER, -64, 30);
-    lv_obj_set_style_radius(bm, 28, 0);
-    lv_obj_set_style_bg_color(bm, lv_color_hex(0x33445A), 0);
-    lv_obj_add_event_cb(bm, ovl_minus_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *bml = lv_label_create(bm);
-    lv_label_set_text(bml, LV_SYMBOL_MINUS);
-    lv_obj_center(bml);
+    if (soil) {
+        /* Tres filas: min, max y cada cuánto mide el nodo. */
+        s_ovl_lo = ovl_make_row(s_ovl, 76,  ovl_lo_minus_cb, ovl_lo_plus_cb);
+        s_ovl_hi = ovl_make_row(s_ovl, 116, ovl_hi_minus_cb, ovl_hi_plus_cb);
+        s_ovl_iv = ovl_make_row(s_ovl, 156, ovl_iv_minus_cb, ovl_iv_plus_cb);
+        lv_obj_set_style_text_color(s_ovl_iv, lv_color_hex(0x8FA8C8), 0);
+    } else {
+        s_ovl_lo = ovl_make_row(s_ovl, 88,  ovl_lo_minus_cb, ovl_lo_plus_cb);
+        s_ovl_hi = ovl_make_row(s_ovl, 136, ovl_hi_minus_cb, ovl_hi_plus_cb);
 
-    lv_obj_t *bp = lv_btn_create(s_ovl);
-    lv_obj_set_size(bp, 56, 56);
-    lv_obj_align(bp, LV_ALIGN_CENTER, 64, 30);
-    lv_obj_set_style_radius(bp, 28, 0);
-    lv_obj_set_style_bg_color(bp, lv_color_hex(0x33445A), 0);
-    lv_obj_add_event_cb(bp, ovl_plus_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *bpl = lv_label_create(bp);
-    lv_label_set_text(bpl, LV_SYMBOL_PLUS);
-    lv_obj_center(bpl);
+        lv_obj_t *hint = lv_label_create(s_ovl);
+        lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(hint, lv_color_hex(0x5A6B7A), 0);
+        lv_label_set_text(hint, "--  =  sin alerta");
+        lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 164);
+    }
+    ovl_refresh();
 
     lv_obj_t *ok = lv_btn_create(s_ovl);
-    lv_obj_set_size(ok, 128, 42);
-    lv_obj_align(ok, LV_ALIGN_BOTTOM_MID, 0, -26);
-    lv_obj_set_style_radius(ok, 21, 0);
+    lv_obj_set_size(ok, 120, 38);
+    lv_obj_align(ok, LV_ALIGN_BOTTOM_MID, 0, -14);
+    lv_obj_set_style_radius(ok, 19, 0);
     lv_obj_set_style_bg_color(ok, lv_color_hex(0x35D07F), 0);
     lv_obj_add_event_cb(ok, ovl_ok_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *okl = lv_label_create(ok);
@@ -315,30 +377,30 @@ static void refresh(void)
 
     if (s_sel >= n) s_sel = 0;
 
-    char id[32], val[16];
+    char id[SENSOR_ID_MAX], val[16];
     uint32_t age = 0;
     sensor_get(s_sel, id, sizeof(id), val, sizeof(val), &age);
-    bool stale = (age > STALE_S);
-    const char *u = unit_for(id);
+    bool stale = (age > sensor_alert_stale_limit(id));
+    const char *u = sensor_unit(id);
+    sensor_alert_state_t st = sensor_alert_state(id);
+    bool out_of_range = (st == SENSOR_ALERT_LOW || st == SENSOR_ALERT_HIGH);
 
     if (s_id_lbl) {
         char name[40];
-        friendly_name(id, name, sizeof(name));
+        sensor_friendly_name(id, name, sizeof(name));
         lv_label_set_text(s_id_lbl, name);
     }
 
-    /* El engranaje (editor de umbral) solo aplica al sensor de suelo. */
-    if (s_gear_btn) {
-        if (is_soil(id)) lv_obj_clear_flag(s_gear_btn, LV_OBJ_FLAG_HIDDEN);
-        else             lv_obj_add_flag(s_gear_btn, LV_OBJ_FLAG_HIDDEN);
-    }
+    if (s_gear_btn) lv_obj_clear_flag(s_gear_btn, LV_OBJ_FLAG_HIDDEN);
 
-    /* Valor + unidad; atenuado si está viejo. */
+    /* Valor + unidad: gris si está viejo, rojo si está fuera de umbral. */
     if (s_val_lbl) {
         if (u[0]) lv_label_set_text_fmt(s_val_lbl, "%s %s", val, u);
         else      lv_label_set_text(s_val_lbl, val);
-        lv_obj_set_style_text_color(s_val_lbl,
-            stale ? lv_color_hex(0x8A949C) : lv_color_white(), 0);
+        lv_color_t c = lv_color_white();
+        if (stale)             c = lv_color_hex(0x8A949C);
+        else if (out_of_range) c = lv_color_hex(0xE74C3C);
+        lv_obj_set_style_text_color(s_val_lbl, c, 0);
     }
 
     /* Récord del día: min / max acumulados. Formateamos los floats con el
@@ -371,19 +433,35 @@ static void refresh(void)
         for (int i = 0; i < hn; i++) {
             lv_chart_set_value_by_id(s_chart, s_ser, i, (int)lroundf(h[i] * 10.0f));
         }
-        lv_chart_set_series_color(s_chart, s_ser,
-            stale ? lv_color_hex(0xE0A030) : lv_color_hex(0x35D07F));
+        lv_color_t sc = lv_color_hex(0x35D07F);
+        if (stale)             sc = lv_color_hex(0xE0A030);
+        else if (out_of_range) sc = lv_color_hex(0xE74C3C);
+        lv_chart_set_series_color(s_chart, s_ser, sc);
         lv_chart_refresh(s_chart);
     }
 
-    /* Pie: índice + antigüedad; ámbar si está viejo. */
+    /* Pie: índice + antigüedad, o el motivo de la alerta si el valor está
+     * fuera de umbral (rojo) / el sensor dejó de publicar (ámbar). */
     if (s_foot_lbl) {
-        char age_txt[16];
-        fmt_age(age, age_txt, sizeof(age_txt));
-        lv_label_set_text_fmt(s_foot_lbl, "%d/%d  |  %s%s",
-            s_sel + 1, n, age_txt, stale ? "  (viejo)" : "");
-        lv_obj_set_style_text_color(s_foot_lbl,
-            stale ? lv_color_hex(0xE0A030) : lv_color_hex(0x7F8C8D), 0);
+        char foot[48];
+        lv_color_t fc = lv_color_hex(0x7F8C8D);
+
+        if (out_of_range) {
+            sensor_rule_t r;
+            sensor_alert_get_rule(id, &r);
+            snprintf(foot, sizeof(foot), "%d/%d  |  %s %.0f %s", s_sel + 1, n,
+                     st == SENSOR_ALERT_LOW ? "min" : "max",
+                     st == SENSOR_ALERT_LOW ? r.lo  : r.hi, u);
+            fc = lv_color_hex(0xE74C3C);
+        } else {
+            char age_txt[16];
+            fmt_age(age, age_txt, sizeof(age_txt));
+            snprintf(foot, sizeof(foot), "%d/%d  |  %s%s", s_sel + 1, n,
+                     age_txt, stale ? "  (viejo)" : "");
+            if (stale) fc = lv_color_hex(0xE0A030);
+        }
+        lv_label_set_text(s_foot_lbl, foot);
+        lv_obj_set_style_text_color(s_foot_lbl, fc, 0);
     }
 }
 
@@ -402,7 +480,6 @@ static void sensors_open(lv_obj_t *parent)
 {
     s_sel = 0;
     s_confirm = false;
-    umbral_load();
 
     s_id_lbl = lv_label_create(parent);
     lv_obj_set_style_text_font(s_id_lbl, &lv_font_montserrat_16, 0);
@@ -457,7 +534,7 @@ static void sensors_open(lv_obj_t *parent)
     lv_obj_set_style_radius(s_gear_btn, 17, 0);
     lv_obj_set_style_bg_color(s_gear_btn, lv_color_hex(0x33445A), 0);
     lv_obj_add_event_cb(s_gear_btn, gear_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_flag(s_gear_btn, LV_OBJ_FLAG_HIDDEN);   /* refresh lo muestra si es suelo */
+    lv_obj_add_flag(s_gear_btn, LV_OBJ_FLAG_HIDDEN);   /* refresh lo muestra si hay sensores */
     lv_obj_t *gl = lv_label_create(s_gear_btn);
     lv_label_set_text(gl, LV_SYMBOL_SETTINGS);
     lv_obj_center(gl);
@@ -490,6 +567,7 @@ static void sensors_close(void)
     ovl_close();
     s_confirm = false;
     s_id_lbl = s_val_lbl = s_stats_lbl = s_chart = s_foot_lbl = s_empty = NULL;
+    s_ovl_lo = s_ovl_hi = NULL;
     s_reset_btn = s_reset_lbl = s_gear_btn = NULL;
     s_ser = NULL;
 }

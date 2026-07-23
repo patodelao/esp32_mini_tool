@@ -21,10 +21,13 @@ typedef struct {
 
 /* --- EDITA AQUÍ tus comandos --- */
 static const cmd_t s_cmds[] = {
-    { "Luz ON",     "labo/actuador/luz/cmd", "ON"    },
-    { "Luz OFF",    "labo/actuador/luz/cmd", "OFF"   },
-    { "Reset pieza","labo/nodo/pieza/cmd",   "reset" },
-    { "Backup Pi",  "labo/pi/cmd",           "backup"},
+    { "Luz ON",      "labo/actuador/luz/cmd", "ON"      },
+    { "Luz OFF",     "labo/actuador/luz/cmd", "OFF"     },
+    { "Leer pieza",  "labo/nodo/pieza/cmd",   "leer"    },
+    { "Reset pieza", "labo/nodo/pieza/cmd",   "reset"   },
+    { "Cal suelo ON","labo/nodo/pieza/cmd",   "cal on"  },
+    { "Cal suelo OFF","labo/nodo/pieza/cmd",  "cal off" },
+    { "Backup Pi",   "labo/pi/cmd",           "backup"  },
 };
 #define CMD_COUNT (sizeof(s_cmds) / sizeof(s_cmds[0]))
 
