@@ -2,22 +2,50 @@
  * tool_pedometer.c — Vista del contador de pasos.
  *
  * El conteo real vive en pedometer_service (lv_timer global, siempre activo).
- * Esta tool solo muestra el total, el progreso hacia una meta y la distancia
- * estimada, refrescando por polling.
+ * Esta tool muestra los pasos de HOY, el progreso hacia la meta, la distancia
+ * estimada y una barrita por cada uno de los últimos días, para ver la semana
+ * de un vistazo en vez de un número suelto.
  */
 #include "tool.h"
 #include "pedometer_service.h"
 
 #include <stdio.h>
 
-#define STEP_GOAL     8000
 #define STEP_METERS   0.72f   /* longitud de zancada estimada (m) */
 
 static lv_obj_t *s_arc = NULL;
 static lv_obj_t *s_count = NULL;
 static lv_obj_t *s_dist = NULL;
+static lv_obj_t *s_bars[PEDOMETER_DAYS];
 static lv_timer_t *s_poll = NULL;
 static uint32_t s_last = 0xFFFFFFFF;
+
+/* Barras de los días cerrados, escaladas al mayor de la serie (o a la meta,
+ * lo que sea más grande) para que se comparen entre sí. */
+static void render_history(void)
+{
+    uint32_t hist[PEDOMETER_DAYS];
+    int n = pedometer_history(hist, PEDOMETER_DAYS);
+
+    uint32_t top = pedometer_get_goal();
+    for (int i = 0; i < n; i++) if (hist[i] > top) top = hist[i];
+    if (top == 0) top = 1;
+
+    for (int i = 0; i < PEDOMETER_DAYS; i++) {
+        if (!s_bars[i]) continue;
+        if (i >= n) {                       /* día sin datos todavía */
+            lv_obj_set_height(s_bars[i], 2);
+            lv_obj_set_style_bg_color(s_bars[i], lv_color_hex(0x2A3A48), 0);
+            continue;
+        }
+        int h = (int)((hist[i] * 22) / top);
+        if (h < 2) h = 2;
+        lv_obj_set_height(s_bars[i], h);
+        /* Verde si ese día se llegó a la meta, gris si no. */
+        bool hit = (pedometer_get_goal() > 0 && hist[i] >= pedometer_get_goal());
+        lv_obj_set_style_bg_color(s_bars[i], lv_color_hex(hit ? 0x35D07F : 0x4A6070), 0);
+    }
+}
 
 static void render(uint32_t steps)
 {
@@ -33,8 +61,12 @@ static void render(uint32_t steps)
         snprintf(buf, sizeof(buf), "%d m", (int)meters);
     lv_label_set_text(s_dist, buf);
 
-    int32_t v = (int32_t)(steps > STEP_GOAL ? STEP_GOAL : steps);
-    lv_arc_set_value(s_arc, v);
+    uint32_t goal = pedometer_get_goal();
+    if (goal == 0) goal = 1;
+    lv_arc_set_range(s_arc, 0, (int32_t)goal);
+    lv_arc_set_value(s_arc, (int32_t)(steps > goal ? goal : steps));
+
+    render_history();
 }
 
 static void poll_cb(lv_timer_t *t)
@@ -62,7 +94,7 @@ static void pedometer_open(lv_obj_t *parent)
     lv_obj_center(s_arc);
     lv_arc_set_rotation(s_arc, 270);
     lv_arc_set_bg_angles(s_arc, 0, 360);
-    lv_arc_set_range(s_arc, 0, STEP_GOAL);
+    lv_arc_set_range(s_arc, 0, (int32_t)(pedometer_get_goal() ? pedometer_get_goal() : 1));
     lv_arc_set_value(s_arc, 0);
     lv_obj_remove_style(s_arc, NULL, LV_PART_KNOB);
     lv_obj_clear_flag(s_arc, LV_OBJ_FLAG_CLICKABLE);
@@ -75,8 +107,8 @@ static void pedometer_open(lv_obj_t *parent)
     lv_obj_t *title = lv_label_create(parent);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x8FA8C8), 0);
-    lv_label_set_text(title, "Pasos");
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, -46);
+    lv_label_set_text(title, "Pasos hoy");
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, -50);
 
     /* Contador grande */
     s_count = lv_label_create(parent);
@@ -90,7 +122,28 @@ static void pedometer_open(lv_obj_t *parent)
     lv_obj_set_style_text_font(s_dist, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(s_dist, lv_color_hex(0x35D07F), 0);
     lv_label_set_text(s_dist, "0 m");
-    lv_obj_align(s_dist, LV_ALIGN_CENTER, 0, 34);
+    lv_obj_align(s_dist, LV_ALIGN_CENTER, 0, 30);
+
+    /* Semana: una barrita por día cerrado, alineadas por la base. */
+    lv_obj_t *week = lv_obj_create(parent);
+    lv_obj_remove_style_all(week);
+    lv_obj_set_size(week, 112, 26);
+    lv_obj_align(week, LV_ALIGN_CENTER, 0, 62);
+    lv_obj_set_flex_flow(week, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(week, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+    lv_obj_set_style_pad_column(week, 5, 0);
+    lv_obj_clear_flag(week, LV_OBJ_FLAG_SCROLLABLE);
+
+    for (int i = 0; i < PEDOMETER_DAYS; i++) {
+        s_bars[i] = lv_obj_create(week);
+        lv_obj_remove_style_all(s_bars[i]);
+        lv_obj_set_width(s_bars[i], 9);
+        lv_obj_set_height(s_bars[i], 2);
+        lv_obj_set_style_radius(s_bars[i], 2, 0);
+        lv_obj_set_style_bg_opa(s_bars[i], LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(s_bars[i], lv_color_hex(0x2A3A48), 0);
+        lv_obj_clear_flag(s_bars[i], LV_OBJ_FLAG_SCROLLABLE);
+    }
 
     /* Botón de reset */
     lv_obj_t *btn = lv_btn_create(parent);
@@ -115,6 +168,7 @@ static void pedometer_close(void)
     s_arc = NULL;
     s_count = NULL;
     s_dist = NULL;
+    for (int i = 0; i < PEDOMETER_DAYS; i++) s_bars[i] = NULL;
 }
 
 const tool_t tool_pedometer = {
