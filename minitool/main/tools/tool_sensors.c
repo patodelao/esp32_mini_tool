@@ -10,12 +10,18 @@
  *     publicar, el valor se atenúa y el pie se pone en ámbar ("viejo").
  *
  * Botones inferiores:
- *   - izquierda: cicla entre los sensores vistos.
- *   - derecha (papelera): borra el récord del sensor actual y arranca uno
- *     nuevo. Pide confirmación (dos toques) para evitar borrados accidentales.
+ *   - ciclar (>): pasa al siguiente sensor.
+ *   - engranaje: solo en el sensor de suelo; abre un overlay para fijar el
+ *     umbral de riego (%), lo guarda en NVS y lo publica retenido en
+ *     labo/config/<nodo>/suelo/umbral para que el ESP8266 alerte solo.
+ *   - papelera: borra el récord del día del sensor actual. Pide confirmación
+ *     (dos toques) para evitar borrados accidentales.
  */
 #include "tool.h"
 #include "sensor_service.h"
+#include "mqtt_hub.h"
+
+#include "nvs.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -34,10 +40,15 @@ static lv_obj_t *s_foot_lbl = NULL;    /* índice + antigüedad */
 static lv_obj_t *s_empty = NULL;
 static lv_obj_t *s_reset_btn = NULL;
 static lv_obj_t *s_reset_lbl = NULL;
+static lv_obj_t *s_gear_btn = NULL;    /* abre el editor de umbral (solo suelo) */
+static lv_obj_t *s_ovl = NULL;         /* overlay editor de umbral */
+static lv_obj_t *s_ovl_val = NULL;
 static lv_timer_t *s_poll = NULL;
 static lv_timer_t *s_confirm_tmr = NULL;
 static bool s_confirm = false;         /* esperando 2º toque de borrado */
 static int s_sel = 0;
+static int s_umbral = 20;              /* % umbral de riego (persistido en NVS) */
+static char s_cfg_topic[64];           /* topic de config del sensor mostrado */
 
 /* Unidad inferida de la última componente del id del topic. */
 static const char *unit_for(const char *id)
@@ -50,6 +61,45 @@ static const char *unit_for(const char *id)
     if (strcmp(leaf, "rssi") == 0) return "dBm";
     if (strcmp(leaf, "abierta_seg") == 0) return "s";
     return "";
+}
+
+/* Nombre legible del nodo (parte del id antes de '/'). Editá la tabla al
+ * agregar nodos; si no está, se muestra el id crudo. */
+static const char *node_name(const char *node)
+{
+    static const struct { const char *id; const char *name; } M[] = {
+        { "sala",  "Pieza" },
+        { "refri", "Refri" },
+    };
+    for (unsigned i = 0; i < sizeof(M) / sizeof(M[0]); i++)
+        if (strcmp(M[i].id, node) == 0) return M[i].name;
+    return node;
+}
+
+/* Nombre legible de la magnitud (parte tras '/'). ASCII only: la fuente no
+ * tiene acentos ni ñ. */
+static const char *mag_name(const char *leaf)
+{
+    if (strcmp(leaf, "temp")  == 0) return "Temp";
+    if (strcmp(leaf, "hum")   == 0) return "Hum";
+    if (strcmp(leaf, "suelo") == 0) return "Suelo";
+    if (strcmp(leaf, "rssi")  == 0) return "Wifi";
+    if (strcmp(leaf, "abierta_seg") == 0) return "Abierta";
+    return leaf;
+}
+
+/* Compone "<Magnitud> <Nodo>", p.ej. "sala/temp" -> "Temp Pieza". */
+static void friendly_name(const char *id, char *out, int out_size)
+{
+    const char *slash = strrchr(id, '/');
+    if (!slash) { snprintf(out, out_size, "%s", id); return; }
+
+    char node[24];
+    int nlen = (int)(slash - id);
+    if (nlen >= (int)sizeof(node)) nlen = (int)sizeof(node) - 1;
+    memcpy(node, id, nlen);
+    node[nlen] = '\0';
+    snprintf(out, out_size, "%s %s", mag_name(slash + 1), node_name(node));
 }
 
 /* "hace 5 s" / "hace 2 min" / "hace 1 h" en un buffer del llamador. */
@@ -104,6 +154,146 @@ static void reset_cb(lv_event_t *e)
     }
 }
 
+/* ----------------------- Umbral de riego (config) ------------------------- */
+
+static bool is_soil(const char *id)
+{
+    const char *slash = strrchr(id, '/');
+    const char *leaf = slash ? slash + 1 : id;
+    return strcmp(leaf, "suelo") == 0;
+}
+
+static void umbral_load(void)
+{
+    nvs_handle_t h;
+    if (nvs_open("sensor", NVS_READONLY, &h) == ESP_OK) {
+        int32_t v;
+        if (nvs_get_i32(h, "umbral_riego", &v) == ESP_OK && v >= 5 && v <= 95)
+            s_umbral = (int)v;
+        nvs_close(h);
+    }
+}
+
+static void umbral_save(void)
+{
+    nvs_handle_t h;
+    if (nvs_open("sensor", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_i32(h, "umbral_riego", (int32_t)s_umbral);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+static void ovl_refresh_val(void)
+{
+    if (s_ovl_val) lv_label_set_text_fmt(s_ovl_val, "%d %%", s_umbral);
+}
+
+static void ovl_close(void)
+{
+    if (s_ovl) { lv_obj_del(s_ovl); s_ovl = NULL; s_ovl_val = NULL; }
+}
+
+static void ovl_minus_cb(lv_event_t *e)
+{
+    (void)e;
+    s_umbral -= 5; if (s_umbral < 5) s_umbral = 5;
+    ovl_refresh_val();
+}
+
+static void ovl_plus_cb(lv_event_t *e)
+{
+    (void)e;
+    s_umbral += 5; if (s_umbral > 95) s_umbral = 95;
+    ovl_refresh_val();
+}
+
+static void refresh(void);
+
+static void ovl_ok_cb(lv_event_t *e)
+{
+    (void)e;
+    umbral_save();
+    char v[8];
+    snprintf(v, sizeof(v), "%d", s_umbral);
+    /* Config retenida: el nodo la recibe al conectar (incluso tras reiniciar). */
+    mqtt_hub_publish(s_cfg_topic, v, 1, true);
+    ovl_close();
+    refresh();
+}
+
+/* Abre el overlay editor de umbral para el sensor de suelo mostrado. */
+static void gear_cb(lv_event_t *e)
+{
+    (void)e;
+    if (s_ovl) return;
+    if (sensor_count() == 0) return;
+
+    char id[32];
+    sensor_get(s_sel, id, sizeof(id), NULL, 0, NULL);
+    if (!is_soil(id)) return;
+
+    /* topic labo/config/<nodo>/suelo/umbral a partir del id "<nodo>/suelo" */
+    char node[24];
+    const char *slash = strrchr(id, '/');
+    int nlen = slash ? (int)(slash - id) : 0;
+    if (nlen >= (int)sizeof(node)) nlen = (int)sizeof(node) - 1;
+    memcpy(node, id, nlen);
+    node[nlen] = '\0';
+    snprintf(s_cfg_topic, sizeof(s_cfg_topic), "labo/config/%s/suelo/umbral", node);
+
+    s_ovl = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_ovl);
+    lv_obj_set_size(s_ovl, 240, 240);
+    lv_obj_center(s_ovl);
+    lv_obj_set_style_bg_color(s_ovl, lv_color_hex(0x0A0E12), 0);
+    lv_obj_set_style_bg_opa(s_ovl, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(s_ovl, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *t = lv_label_create(s_ovl);
+    lv_obj_set_style_text_font(t, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(t, lv_color_hex(0x8FA8C8), 0);
+    lv_label_set_text(t, "Umbral riego");
+    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 40);
+
+    s_ovl_val = lv_label_create(s_ovl);
+    lv_obj_set_style_text_font(s_ovl_val, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_color(s_ovl_val, lv_color_white(), 0);
+    lv_obj_align(s_ovl_val, LV_ALIGN_CENTER, 0, -30);
+    ovl_refresh_val();
+
+    lv_obj_t *bm = lv_btn_create(s_ovl);
+    lv_obj_set_size(bm, 56, 56);
+    lv_obj_align(bm, LV_ALIGN_CENTER, -64, 30);
+    lv_obj_set_style_radius(bm, 28, 0);
+    lv_obj_set_style_bg_color(bm, lv_color_hex(0x33445A), 0);
+    lv_obj_add_event_cb(bm, ovl_minus_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *bml = lv_label_create(bm);
+    lv_label_set_text(bml, LV_SYMBOL_MINUS);
+    lv_obj_center(bml);
+
+    lv_obj_t *bp = lv_btn_create(s_ovl);
+    lv_obj_set_size(bp, 56, 56);
+    lv_obj_align(bp, LV_ALIGN_CENTER, 64, 30);
+    lv_obj_set_style_radius(bp, 28, 0);
+    lv_obj_set_style_bg_color(bp, lv_color_hex(0x33445A), 0);
+    lv_obj_add_event_cb(bp, ovl_plus_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *bpl = lv_label_create(bp);
+    lv_label_set_text(bpl, LV_SYMBOL_PLUS);
+    lv_obj_center(bpl);
+
+    lv_obj_t *ok = lv_btn_create(s_ovl);
+    lv_obj_set_size(ok, 128, 42);
+    lv_obj_align(ok, LV_ALIGN_BOTTOM_MID, 0, -26);
+    lv_obj_set_style_radius(ok, 21, 0);
+    lv_obj_set_style_bg_color(ok, lv_color_hex(0x35D07F), 0);
+    lv_obj_add_event_cb(ok, ovl_ok_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *okl = lv_label_create(ok);
+    lv_label_set_text(okl, LV_SYMBOL_OK "  Guardar");
+    lv_obj_set_style_text_color(okl, lv_color_hex(0x0A0E12), 0);
+    lv_obj_center(okl);
+}
+
 /* --------------------------------- Refresh -------------------------------- */
 
 static void refresh(void)
@@ -117,6 +307,7 @@ static void refresh(void)
         if (s_stats_lbl) lv_label_set_text(s_stats_lbl, "");
         if (s_id_lbl)    lv_label_set_text(s_id_lbl, "Sensores");
         if (s_foot_lbl)  lv_label_set_text(s_foot_lbl, "");
+        if (s_gear_btn)  lv_obj_add_flag(s_gear_btn, LV_OBJ_FLAG_HIDDEN);
         return;
     }
     if (s_empty) lv_obj_add_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
@@ -130,7 +321,17 @@ static void refresh(void)
     bool stale = (age > STALE_S);
     const char *u = unit_for(id);
 
-    if (s_id_lbl) lv_label_set_text(s_id_lbl, id);
+    if (s_id_lbl) {
+        char name[40];
+        friendly_name(id, name, sizeof(name));
+        lv_label_set_text(s_id_lbl, name);
+    }
+
+    /* El engranaje (editor de umbral) solo aplica al sensor de suelo. */
+    if (s_gear_btn) {
+        if (is_soil(id)) lv_obj_clear_flag(s_gear_btn, LV_OBJ_FLAG_HIDDEN);
+        else             lv_obj_add_flag(s_gear_btn, LV_OBJ_FLAG_HIDDEN);
+    }
 
     /* Valor + unidad; atenuado si está viejo. */
     if (s_val_lbl) {
@@ -201,6 +402,7 @@ static void sensors_open(lv_obj_t *parent)
 {
     s_sel = 0;
     s_confirm = false;
+    umbral_load();
 
     s_id_lbl = lv_label_create(parent);
     lv_obj_set_style_text_font(s_id_lbl, &lv_font_montserrat_16, 0);
@@ -238,21 +440,31 @@ static void sensors_open(lv_obj_t *parent)
     lv_label_set_text(s_foot_lbl, "");
     lv_obj_align(s_foot_lbl, LV_ALIGN_TOP_MID, 0, 150);
 
-    /* Botón izquierdo: ciclar sensor. */
+    /* Fila inferior: ciclar sensor | engranaje (umbral, solo suelo) | papelera. */
     lv_obj_t *btn = lv_btn_create(parent);
-    lv_obj_set_size(btn, 96, 34);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, -25, -32);
+    lv_obj_set_size(btn, 44, 34);
+    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, -52, -32);
     lv_obj_set_style_radius(btn, 17, 0);
     lv_obj_set_style_bg_color(btn, lv_color_hex(0x33445A), 0);
     lv_obj_add_event_cb(btn, next_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *bl = lv_label_create(btn);
-    lv_label_set_text(bl, LV_SYMBOL_RIGHT " Sensor");
+    lv_label_set_text(bl, LV_SYMBOL_RIGHT);
     lv_obj_center(bl);
 
-    /* Botón derecho: borrar récord (con confirmación). */
+    s_gear_btn = lv_btn_create(parent);
+    lv_obj_set_size(s_gear_btn, 44, 34);
+    lv_obj_align(s_gear_btn, LV_ALIGN_BOTTOM_MID, 0, -32);
+    lv_obj_set_style_radius(s_gear_btn, 17, 0);
+    lv_obj_set_style_bg_color(s_gear_btn, lv_color_hex(0x33445A), 0);
+    lv_obj_add_event_cb(s_gear_btn, gear_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(s_gear_btn, LV_OBJ_FLAG_HIDDEN);   /* refresh lo muestra si es suelo */
+    lv_obj_t *gl = lv_label_create(s_gear_btn);
+    lv_label_set_text(gl, LV_SYMBOL_SETTINGS);
+    lv_obj_center(gl);
+
     s_reset_btn = lv_btn_create(parent);
     lv_obj_set_size(s_reset_btn, 44, 34);
-    lv_obj_align(s_reset_btn, LV_ALIGN_BOTTOM_MID, 50, -32);
+    lv_obj_align(s_reset_btn, LV_ALIGN_BOTTOM_MID, 52, -32);
     lv_obj_set_style_radius(s_reset_btn, 17, 0);
     lv_obj_set_style_bg_color(s_reset_btn, lv_color_hex(0x33445A), 0);
     lv_obj_add_event_cb(s_reset_btn, reset_cb, LV_EVENT_CLICKED, NULL);
@@ -275,9 +487,10 @@ static void sensors_close(void)
 {
     if (s_poll) { lv_timer_del(s_poll); s_poll = NULL; }
     if (s_confirm_tmr) { lv_timer_del(s_confirm_tmr); s_confirm_tmr = NULL; }
+    ovl_close();
     s_confirm = false;
     s_id_lbl = s_val_lbl = s_stats_lbl = s_chart = s_foot_lbl = s_empty = NULL;
-    s_reset_btn = s_reset_lbl = NULL;
+    s_reset_btn = s_reset_lbl = s_gear_btn = NULL;
     s_ser = NULL;
 }
 
