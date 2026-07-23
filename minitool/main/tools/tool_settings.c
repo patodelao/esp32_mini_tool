@@ -127,10 +127,27 @@ static void page_close(void)
     refresh_values();
 }
 
-static void page_back_cb(lv_event_t *e) { (void)e; page_close(); }
+/* Volver de una subpágina: deslizar en horizontal, en cualquier sentido.
+ *
+ * Un botón en la esquina superior izquierda no sirve en una pantalla redonda:
+ * a esa altura el círculo solo llega hasta x≈60, así que el botón queda medio
+ * cortado y es incómodo de acertar. Las esquinas de un display circular no
+ * existen; los controles van al centro o abajo.
+ *
+ * Se aceptan los dos sentidos a propósito: el gesto de salir de una tool (en
+ * ui_menu) también acepta ambos, así que no hay que recordar cuál va en cada
+ * pantalla. */
+static void page_gesture_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_indev_t *indev = lv_indev_get_act();
+    if (!indev) return;
+    lv_dir_t dir = lv_indev_get_gesture_dir(indev);
+    if (dir == LV_DIR_LEFT || dir == LV_DIR_RIGHT) page_close();
+}
 
-/* Overlay a pantalla completa con título y chevron de volver arriba a la
- * izquierda, como en watchOS. Devuelve el contenedor para llenarlo. */
+/* Overlay a pantalla completa con el título arriba, centrado. Se vuelve con el
+ * gesto. Devuelve el contenedor para llenarlo. */
 static lv_obj_t *page_create(const char *title)
 {
     if (s_page) page_close();
@@ -142,22 +159,13 @@ static lv_obj_t *page_create(const char *title)
     lv_obj_set_style_bg_color(s_page, lv_color_hex(0x0A0E12), 0);
     lv_obj_set_style_bg_opa(s_page, LV_OPA_COVER, 0);
     lv_obj_clear_flag(s_page, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *back = lv_btn_create(s_page);
-    lv_obj_set_size(back, 38, 30);
-    lv_obj_align(back, LV_ALIGN_TOP_LEFT, 30, 16);
-    lv_obj_set_style_radius(back, 15, 0);
-    lv_obj_set_style_bg_color(back, lv_color_hex(0x22303F), 0);
-    lv_obj_add_event_cb(back, page_back_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *bl = lv_label_create(back);
-    lv_label_set_text(bl, LV_SYMBOL_LEFT);
-    lv_obj_center(bl);
+    lv_obj_add_event_cb(s_page, page_gesture_cb, LV_EVENT_GESTURE, NULL);
 
     lv_obj_t *t = lv_label_create(s_page);
     lv_obj_set_style_text_font(t, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(t, lv_color_hex(0x8FA8C8), 0);
     lv_label_set_text(t, title);
-    lv_obj_align(t, LV_ALIGN_TOP_MID, 14, 20);
+    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 26);
 
     return s_page;
 }
@@ -180,8 +188,12 @@ static void page_brightness(lv_event_t *e)
     lv_obj_t *p = page_create("Brillo");
 
     lv_obj_t *arc = lv_arc_create(p);
-    lv_obj_set_size(arc, 176, 176);
-    lv_obj_align(arc, LV_ALIGN_CENTER, 0, 12);
+    lv_obj_set_size(arc, 158, 158);
+    lv_obj_align(arc, LV_ALIGN_CENTER, 0, -4);
+    /* ADV_HITTEST: el arco solo captura el toque sobre su propia línea. Sin
+     * esto se queda con todo su rectángulo, incluido el centro, y no habría
+     * dónde empezar el gesto de volver. */
+    lv_obj_add_flag(arc, LV_OBJ_FLAG_ADV_HITTEST);
     lv_arc_set_rotation(arc, 135);
     lv_arc_set_bg_angles(arc, 0, 270);
     lv_arc_set_range(arc, 10, 100);
@@ -229,12 +241,18 @@ static void page_options(const char *title, const char **labels, int n,
     lv_obj_set_style_pad_row(list, 6, 0);
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
+    /* Los gestos que empiezan sobre la lista tienen que llegar a la página:
+     * si no, deslizar sobre las opciones (que es casi toda la pantalla) no
+     * volvería. La lista solo desplaza en vertical, así que el horizontal
+     * queda libre. */
+    lv_obj_add_flag(list, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     for (int i = 0; i < n; i++) {
         lv_obj_t *btn = lv_btn_create(list);
         lv_obj_set_size(btn, LV_PCT(100), 40);
         lv_obj_set_style_radius(btn, 20, 0);
         lv_obj_set_style_bg_color(btn, lv_color_hex(i == selected ? 0x2A4356 : COL_CARD), 0);
+        lv_obj_add_flag(btn, LV_OBJ_FLAG_EVENT_BUBBLE);
         lv_obj_add_event_cb(btn, opt_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
         lv_obj_t *lbl = lv_label_create(btn);
@@ -310,6 +328,7 @@ static lv_obj_t *card_create(const char *icon, uint32_t chip_color,
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(card, CARD_H / 2, 0);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_EVENT_BUBBLE);   /* deja pasar los gestos */
     if (cb) {
         lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, ud);
@@ -378,6 +397,10 @@ static void settings_open(lv_obj_t *parent)
     lv_obj_set_scrollbar_mode(s_list, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_snap_y(s_list, LV_SCROLL_SNAP_CENTER);
     lv_obj_add_event_cb(s_list, list_scroll_cb, LV_EVENT_SCROLL, NULL);
+    /* La lista ocupa toda la pantalla, así que sin esto se quedaría con todos
+     * los gestos y no habría forma de salir de Config: el gesto de volver al
+     * menú lo atiende ui_menu en la pantalla, que es el padre. */
+    lv_obj_add_flag(s_list, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     header_create("Pantalla");
 
