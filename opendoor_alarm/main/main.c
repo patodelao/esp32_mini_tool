@@ -86,12 +86,19 @@
 #define MQTT_TOPIC_IP       "labo/nodo/"   DEVICE_ID "/ip"     /* para llegarle  */
 #define MQTT_TOPIC_OPENSECS "labo/sensor/" DEVICE_ID "/abierta_seg"
 #define MQTT_TOPIC_CMD      "labo/nodo/"   DEVICE_ID "/cmd"   /* tool Control */
+/* Bandera RETENIDA para pedir una ventana de actualizacion. Este nodo duerme
+ * casi todo el tiempo, asi que no sirve de nada abrir el OTA "ahora": hay que
+ * dejar el pedido puesto y que lo encuentre al despertar. Se borra sola al
+ * consumirse, para que la ventana sea de una sola vez. */
+#define MQTT_TOPIC_OTA_FLAG "labo/config/" DEVICE_ID "/ota"
+#define OTA_WINDOW_MS       (5 * 60 * 1000)
 
 static const char *TAG = "door_alarm";
 static EventGroupHandle_t s_net_events;
 static bool s_wifi_shutdown_requested;
 static bool s_ws2812_ready;
 static bool s_alarm_escalated;
+static volatile bool s_ota_requested;   /* llego la bandera de OTA */
 static esp_mqtt_client_handle_t s_mqtt_client;
 
 static bool door_is_open(void)
@@ -321,6 +328,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         publish_salud();
         publish_ip();
         esp_mqtt_client_subscribe(s_mqtt_client, MQTT_TOPIC_CMD, 1);
+        esp_mqtt_client_subscribe(s_mqtt_client, MQTT_TOPIC_OTA_FLAG, 1);
         /* El servidor de actualizacion se levanta recien con red arriba. */
         ota_web_start(OTA_PASSWORD, publish_alert);
     } else if (event_id == MQTT_EVENT_DATA) {
@@ -329,6 +337,20 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         int n = ev->data_len < (int)sizeof(cmd) - 1 ? ev->data_len : (int)sizeof(cmd) - 1;
         memcpy(cmd, ev->data, n);
         cmd[n] = '\0';
+        /* topic tambien viene sin terminar en cero */
+        char topic[64];
+        int tn = ev->topic_len < (int)sizeof(topic) - 1 ? ev->topic_len : (int)sizeof(topic) - 1;
+        memcpy(topic, ev->topic, tn);
+        topic[tn] = '\0';
+
+        if (strcmp(topic, MQTT_TOPIC_OTA_FLAG) == 0) {
+            if (cmd[0] == '1') {
+                s_ota_requested = true;
+                ESP_LOGW(TAG, "Ventana de OTA pedida");
+            }
+            return;
+        }
+
         ESP_LOGI(TAG, "CMD: %s", cmd);
         if (strcmp(cmd, "reset") == 0 || strcmp(cmd, "reiniciar") == 0) {
             publish_alert("ok", "Reiniciando el nodo");
@@ -337,6 +359,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         } else if (strcmp(cmd, "leer") == 0) {
             publish_salud();
             publish_ip();
+        } else if (strcmp(cmd, "ota") == 0) {
+            s_ota_requested = true;   /* util solo si esta despierto ahora */
         }
     } else if (event_id == MQTT_EVENT_DISCONNECTED) {
         xEventGroupClearBits(s_net_events, MQTT_CONNECTED_BIT);
@@ -628,6 +652,27 @@ static void alarm_task(void *arg)
     }
 
     alarm_outputs_off();
+
+    /* Ventana de actualizacion. Este nodo duerme apenas termina su trabajo, y
+       entre que conecta y se duerme pasan un par de segundos: imposible subirle
+       firmware. Si quedo pedida la ventana (bandera retenida), se queda
+       despierto un rato con el servidor HTTP escuchando.
+
+       La bandera se borra ANTES de esperar, para que la ventana sea de una sola
+       vez: si no, tras el reinicio del OTA volveria a encontrarla puesta. */
+    if (s_ota_requested && mqtt_ready()) {
+        esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_OTA_FLAG, "", 0, 1, 1);
+        publish_alert("aviso", "Ventana de actualizacion abierta (5 min)");
+        ESP_LOGW(TAG, "Ventana OTA abierta por %d s", OTA_WINDOW_MS / 1000);
+
+        int waited = 0;
+        while (waited < OTA_WINDOW_MS) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            waited += 1000;
+            if ((waited % 60000) == 0) publish_salud();   /* senal de vida */
+        }
+        ESP_LOGI(TAG, "Ventana OTA cerrada");
+    }
 
     /* Anunciar que el nodo se va a dormir (offline limpio, retenido). Así la
        tool Nodos muestra "offline"/durmiendo en vez de esperar al watchdog. */

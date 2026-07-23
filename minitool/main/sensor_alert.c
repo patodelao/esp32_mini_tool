@@ -14,6 +14,7 @@
  */
 #include "sensor_alert.h"
 #include "sensor_service.h"
+#include "fleet_service.h"
 #include "ui_notify.h"
 
 #include "esp_timer.h"
@@ -393,6 +394,16 @@ static void tick_cb(void *arg)
         if (!s_nodes[k].used || s_nodes[k].vistos == 0) continue;
 
         bool mudo = (s_nodes[k].mudos == s_nodes[k].vistos);
+
+        /* Un nodo que se declaró offline no está "sin datos": está durmiendo o
+         * apagado, y eso ya se ve en la tool Nodos. Avisar de eso sería ruido
+         * garantizado con los nodos de bajo consumo, que pasan dormidos casi
+         * todo el tiempo. */
+        if (mudo && !fleet_is_online(s_nodes[k].node)) {
+            s_nodes[k].mudo = false;   /* para avisar si vuelve y se queda mudo */
+            continue;
+        }
+
         if (mudo == s_nodes[k].mudo) continue;
         s_nodes[k].mudo = mudo;
 

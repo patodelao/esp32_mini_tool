@@ -17,6 +17,7 @@ typedef struct {
     const char *label;    /* texto del botón            */
     const char *topic;    /* topic MQTT a publicar      */
     const char *payload;  /* carga útil                 */
+    bool        retain;   /* dejarlo puesto en el broker */
 } cmd_t;
 
 /* --- EDITA AQUÍ tus comandos --- */
@@ -29,6 +30,9 @@ static const cmd_t s_cmds[] = {
     { "Cal suelo OFF","labo/nodo/pieza/cmd",  "cal off" },
     { "Leer refri",  "labo/nodo/refri/cmd",   "leer"    },
     { "Reset refri", "labo/nodo/refri/cmd",   "reset"   },
+    /* Retenido: el refri duerme casi todo el tiempo, asi que el pedido tiene
+     * que quedar puesto hasta que despierte y lo encuentre. */
+    { "OTA refri",   "labo/config/refri/ota", "1",       true },
     { "Backup Pi",   "labo/pi/cmd",           "backup"  },
 };
 #define CMD_COUNT (sizeof(s_cmds) / sizeof(s_cmds[0]))
@@ -42,7 +46,7 @@ static void cmd_click_cb(lv_event_t *e)
         ui_notify_push("Control", NOTIFY_WARNING, "Sin conexión MQTT");
         return;
     }
-    mqtt_hub_publish(s_cmds[idx].topic, s_cmds[idx].payload, 1, false);
+    mqtt_hub_publish(s_cmds[idx].topic, s_cmds[idx].payload, 1, s_cmds[idx].retain);
     ui_notify_push("Control", NOTIFY_INFO, s_cmds[idx].label);
 }
 

@@ -127,6 +127,14 @@ bool fleet_get(int idx, char *id, int id_size, bool *online, uint32_t *age_s)
     return false;
 }
 
+bool fleet_is_online(const char *id)
+{
+    for (int i = 0; i < MAX_NODES; i++) {
+        if (s_nodes[i].used && strcmp(s_nodes[i].id, id) == 0) return s_nodes[i].online;
+    }
+    return true;   /* nodo desconocido: no suprimir el aviso */
+}
+
 bool fleet_get_ip(int idx, char *ip, int ip_size)
 {
     int c = 0;

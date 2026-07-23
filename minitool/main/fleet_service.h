@@ -32,6 +32,11 @@ int fleet_count(void);
  * mensaje (útil para marcar "sin señal" si es muy alto). */
 bool fleet_get(int i, char *id, int id_size, bool *online, uint32_t *age_s);
 
+/* true si ese nodo se declara online. Sirve para no confundir "se cayó" con
+ * "está durmiendo": un nodo de bajo consumo (el refri) publica offline limpio
+ * antes de dormirse, así que su silencio posterior es esperable. */
+bool fleet_is_online(const char *id);
+
 /* IP del nodo i, si la publicó. Devuelve false si no se conoce. */
 bool fleet_get_ip(int i, char *ip, int ip_size);
 
