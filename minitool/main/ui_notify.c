@@ -17,6 +17,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+#include "nvs.h"
 
 #include <string.h>
 #include <time.h>
@@ -49,6 +50,16 @@ static notify_record_t   s_hist[NOTIFY_HIST];
 static int               s_hist_n = 0;     /* válidos, tope NOTIFY_HIST */
 static int               s_hist_head = 0;  /* dónde va el próximo */
 static SemaphoreHandle_t s_hist_lock = NULL;
+static volatile bool     s_hist_dirty = false;  /* hay cambios sin guardar */
+static uint32_t          s_hist_saved_ms = 0;   /* último guardado */
+
+#define HIST_NS       "notifhist"
+#define HIST_KEY      "hist"
+#define HIST_SAVE_MS  10000   /* no escribir flash más seguido que esto */
+
+/* Definidas en la sección "Historial", más abajo; se usan antes. */
+static void history_load(void);
+static void history_save(void);
 
 /* --- Estilo por nivel ------------------------------------------------------ */
 
@@ -202,6 +213,19 @@ static void show_toast(const notify_item_t *it)
 static void drain_timer_cb(lv_timer_t *t)
 {
     (void)t;
+
+    /* Persistir el historial acá (hilo de LVGL) y con un mínimo entre
+     * escrituras: una ráfaga de alertas no debe traducirse en una escritura
+     * de flash por cada una. */
+    if (s_hist_dirty) {
+        uint32_t now = lv_tick_get();
+        if (now - s_hist_saved_ms >= HIST_SAVE_MS) {
+            s_hist_dirty = false;
+            s_hist_saved_ms = now;
+            history_save();
+        }
+    }
+
     if (s_toast) return;               /* espera a que el actual se cierre */
     if (!s_queue) return;
 
@@ -217,6 +241,7 @@ void ui_notify_init(void)
 {
     if (s_queue) return; /* idempotente */
     s_hist_lock = xSemaphoreCreateMutex();
+    history_load();      /* el historial sobrevive al reinicio */
     s_queue = xQueueCreate(NOTIFY_QUEUE_LEN, sizeof(notify_item_t));
     if (!s_queue) {
         ESP_LOGE(TAG, "No se pudo crear la cola de notificaciones");
@@ -231,6 +256,46 @@ void ui_notify_init(void)
  * Ring buffer protegido con un mutex: ui_notify_push() puede venir de la tarea
  * MQTT o de un timer, y la tool Alertas lee desde el hilo de LVGL.
  */
+/* El blob guarda el ring tal cual, con su cabeza y su cuenta. */
+typedef struct {
+    notify_record_t rec[NOTIFY_HIST];
+    int16_t         n, head;
+} hist_blob_t;
+
+static void history_load(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(HIST_NS, NVS_READONLY, &h) != ESP_OK) return;
+
+    static hist_blob_t blob;   /* ~2 kB: static para no cargar el stack */
+    size_t sz = sizeof(blob);
+    if (nvs_get_blob(h, HIST_KEY, &blob, &sz) == ESP_OK && sz == sizeof(blob)) {
+        memcpy(s_hist, blob.rec, sizeof(s_hist));
+        s_hist_n    = blob.n    > NOTIFY_HIST ? NOTIFY_HIST : blob.n;
+        s_hist_head = blob.head % NOTIFY_HIST;
+    }
+    nvs_close(h);
+}
+
+/* Se llama desde el hilo de LVGL (drain timer), no desde el productor: así una
+ * ráfaga de alertas no dispara una escritura de flash por cada una. */
+static void history_save(void)
+{
+    if (!s_hist_lock) return;
+    static hist_blob_t blob;
+    if (xSemaphoreTake(s_hist_lock, pdMS_TO_TICKS(50)) != pdTRUE) return;
+    memcpy(blob.rec, s_hist, sizeof(blob.rec));
+    blob.n    = (int16_t)s_hist_n;
+    blob.head = (int16_t)s_hist_head;
+    xSemaphoreGive(s_hist_lock);
+
+    nvs_handle_t h;
+    if (nvs_open(HIST_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_blob(h, HIST_KEY, &blob, sizeof(blob));
+    nvs_commit(h);
+    nvs_close(h);
+}
+
 static void history_add(const notify_item_t *it)
 {
     if (!s_hist_lock) return;
@@ -247,6 +312,7 @@ static void history_add(const notify_item_t *it)
     if (s_hist_n < NOTIFY_HIST) s_hist_n++;
 
     xSemaphoreGive(s_hist_lock);
+    s_hist_dirty = true;   /* el drain timer lo persiste */
 }
 
 int ui_notify_history_count(void)
@@ -271,7 +337,10 @@ void ui_notify_history_clear(void)
     if (xSemaphoreTake(s_hist_lock, pdMS_TO_TICKS(50)) != pdTRUE) return;
     s_hist_n = 0;
     s_hist_head = 0;
+    memset(s_hist, 0, sizeof(s_hist));
     xSemaphoreGive(s_hist_lock);
+    history_save();   /* el borrado se persiste ya: es una acción del usuario */
+    s_hist_dirty = false;
 }
 
 void ui_notify_push(const char *source, notify_level_t level, const char *msg)

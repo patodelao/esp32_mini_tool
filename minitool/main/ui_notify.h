@@ -45,7 +45,8 @@ void ui_notify_push(const char *source, notify_level_t level, const char *msg);
  *
  * Un toast dura unos segundos: si no estabas mirando la pantalla, se perdió.
  * Toda notificación queda además registrada acá, para poder revisarla después
- * (lo muestra la tool Alertas). Solo en RAM: se vacía al reiniciar.
+ * (lo muestra la tool Alertas). Se persiste en NVS, así que sobrevive a
+ * reinicios y cortes de luz — que es justo cuando querés saber qué pasó.
  */
 #define NOTIFY_HIST 20
 
