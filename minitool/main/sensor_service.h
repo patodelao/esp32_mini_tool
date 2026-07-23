@@ -2,7 +2,7 @@
  * sensor_service.h — Lecturas de sensores vía MQTT con histórico corto.
  *
  * Se suscribe a "labo/sensor/#". El id del sensor es lo que sigue tras
- * "labo/sensor/" (p.ej. "sala/temp"). El payload se toma como número
+ * "labo/sensor/" (p.ej. "pieza/temp"). El payload se toma como número
  * (p.ej. "23.5"); se guarda el último valor y un histórico para graficar.
  *
  * Convención de topic (ajústala en SENSOR_FILTER/PREFIX si usas otra):

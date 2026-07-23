@@ -2,7 +2,7 @@
  * tool_sensors.c — Visor de sensores del home-lab (MQTT).
  *
  * Muestra, para el sensor seleccionado:
- *   - id del topic (lo que sigue a "labo/sensor/", p.ej. "sala/temp")
+ *   - id del topic (lo que sigue a "labo/sensor/", p.ej. "pieza/temp")
  *   - valor actual con unidad inferida del topic (°C, %, dBm, s)
  *   - récord del día: min / max acumulados (reinicio a medianoche o manual)
  *   - gráfico del histórico corto
@@ -28,7 +28,7 @@
 #include <math.h>
 
 /* Sobre esta antigüedad (s) sin actualizar, el sensor se considera "viejo".
- * El nodo sala publica cada 10 s; 60 s deja margen para varios ciclos. */
+ * El nodo pieza publica cada 10 s; 60 s deja margen para varios ciclos. */
 #define STALE_S 60
 
 static lv_obj_t *s_id_lbl = NULL;
@@ -68,7 +68,7 @@ static const char *unit_for(const char *id)
 static const char *node_name(const char *node)
 {
     static const struct { const char *id; const char *name; } M[] = {
-        { "sala",  "Pieza" },
+        { "pieza", "Pieza" },
         { "refri", "Refri" },
     };
     for (unsigned i = 0; i < sizeof(M) / sizeof(M[0]); i++)
@@ -88,7 +88,7 @@ static const char *mag_name(const char *leaf)
     return leaf;
 }
 
-/* Compone "<Magnitud> <Nodo>", p.ej. "sala/temp" -> "Temp Pieza". */
+/* Compone "<Magnitud> <Nodo>", p.ej. "pieza/temp" -> "Temp Pieza". */
 static void friendly_name(const char *id, char *out, int out_size)
 {
     const char *slash = strrchr(id, '/');

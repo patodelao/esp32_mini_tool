@@ -170,6 +170,10 @@ static void sensor_cb(const char *topic, int topic_len, const char *data, int da
     int plen = (int)strlen(SENSOR_PREFIX);
     if (topic_len <= plen || strncmp(topic, SENSOR_PREFIX, plen) != 0) return;
 
+    /* Payload vacío = borrado de un mensaje retenido en el broker, no una
+     * lectura: ignorarlo para no crear sensores fantasma. */
+    if (data_len == 0) return;
+
     char id[ID_MAX];
     int n = topic_len - plen;
     if (n >= (int)sizeof(id)) n = (int)sizeof(id) - 1;

@@ -23,7 +23,7 @@ typedef struct {
 static const cmd_t s_cmds[] = {
     { "Luz ON",     "labo/actuador/luz/cmd", "ON"    },
     { "Luz OFF",    "labo/actuador/luz/cmd", "OFF"   },
-    { "Reset sala", "labo/nodo/sala/cmd",    "reset" },
+    { "Reset pieza","labo/nodo/pieza/cmd",   "reset" },
     { "Backup Pi",  "labo/pi/cmd",           "backup"},
 };
 #define CMD_COUNT (sizeof(s_cmds) / sizeof(s_cmds[0]))
