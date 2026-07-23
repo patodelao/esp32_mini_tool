@@ -127,27 +127,19 @@ static void page_close(void)
     refresh_values();
 }
 
-/* Volver de una subpágina: deslizar en horizontal, en cualquier sentido.
- *
- * Un botón en la esquina superior izquierda no sirve en una pantalla redonda:
- * a esa altura el círculo solo llega hasta x≈60, así que el botón queda medio
- * cortado y es incómodo de acertar. Las esquinas de un display circular no
- * existen; los controles van al centro o abajo.
- *
- * Se aceptan los dos sentidos a propósito: el gesto de salir de una tool (en
- * ui_menu) también acepta ambos, así que no hay que recordar cuál va en cada
- * pantalla. */
-static void page_gesture_cb(lv_event_t *e)
-{
-    (void)e;
-    lv_indev_t *indev = lv_indev_get_act();
-    if (!indev) return;
-    lv_dir_t dir = lv_indev_get_gesture_dir(indev);
-    if (dir == LV_DIR_LEFT || dir == LV_DIR_RIGHT) page_close();
-}
+static void page_back_cb(lv_event_t *e) { (void)e; page_close(); }
 
-/* Overlay a pantalla completa con el título arriba, centrado. Se vuelve con el
- * gesto. Devuelve el contenedor para llenarlo. */
+/*
+ * Overlay a pantalla completa, con el botón de volver ABAJO AL CENTRO.
+ *
+ * En una pantalla redonda las esquinas no existen: un botón arriba a la
+ * izquierda queda medio cortado por el círculo y es incómodo de acertar. Abajo
+ * al centro es la zona más ancha y accesible, y no compite con el contenido.
+ *
+ * 'title' puede ser NULL cuando la página se explica sola (el brillo es un
+ * arco enorme con el porcentaje en el medio: un encabezado ahí solo chocaría
+ * con el borde del arco).
+ */
 static lv_obj_t *page_create(const char *title)
 {
     if (s_page) page_close();
@@ -159,13 +151,26 @@ static lv_obj_t *page_create(const char *title)
     lv_obj_set_style_bg_color(s_page, lv_color_hex(0x0A0E12), 0);
     lv_obj_set_style_bg_opa(s_page, LV_OPA_COVER, 0);
     lv_obj_clear_flag(s_page, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(s_page, page_gesture_cb, LV_EVENT_GESTURE, NULL);
 
-    lv_obj_t *t = lv_label_create(s_page);
-    lv_obj_set_style_text_font(t, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(t, lv_color_hex(0x8FA8C8), 0);
-    lv_label_set_text(t, title);
-    lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 26);
+    if (title) {
+        lv_obj_t *t = lv_label_create(s_page);
+        lv_obj_set_style_text_font(t, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(t, lv_color_hex(0x8FA8C8), 0);
+        lv_label_set_text(t, title);
+        lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 34);
+    }
+
+    lv_obj_t *back = lv_btn_create(s_page);
+    lv_obj_set_size(back, 76, 38);
+    lv_obj_align(back, LV_ALIGN_BOTTOM_MID, 0, -12);
+    lv_obj_set_style_radius(back, 19, 0);
+    lv_obj_set_style_bg_color(back, lv_color_hex(0x22303F), 0);
+    lv_obj_set_style_bg_color(back, lv_color_hex(0x33455A), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(back, page_back_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *bl = lv_label_create(back);
+    lv_obj_set_style_text_font(bl, &lv_font_montserrat_16, 0);
+    lv_label_set_text(bl, LV_SYMBOL_LEFT);
+    lv_obj_center(bl);
 
     return s_page;
 }
@@ -185,14 +190,16 @@ static void bright_arc_cb(lv_event_t *e)
 static void page_brightness(lv_event_t *e)
 {
     (void)e;
-    lv_obj_t *p = page_create("Brillo");
+    /* Sin título: el arco con el porcentaje gigante se explica solo, y un
+     * encabezado a esta altura chocaría con su borde superior. */
+    lv_obj_t *p = page_create(NULL);
 
     lv_obj_t *arc = lv_arc_create(p);
-    lv_obj_set_size(arc, 158, 158);
-    lv_obj_align(arc, LV_ALIGN_CENTER, 0, -4);
-    /* ADV_HITTEST: el arco solo captura el toque sobre su propia línea. Sin
-     * esto se queda con todo su rectángulo, incluido el centro, y no habría
-     * dónde empezar el gesto de volver. */
+    lv_obj_set_size(arc, 150, 150);
+    lv_obj_align(arc, LV_ALIGN_CENTER, 0, -14);
+    /* ADV_HITTEST: el arco solo responde al toque sobre su propia línea. Sin
+     * esto se queda con todo su rectángulo y un toque en el centro pegaría un
+     * salto al valor sin querer. */
     lv_obj_add_flag(arc, LV_OBJ_FLAG_ADV_HITTEST);
     lv_arc_set_rotation(arc, 135);
     lv_arc_set_bg_angles(arc, 0, 270);
@@ -211,7 +218,7 @@ static void page_brightness(lv_event_t *e)
     lv_obj_set_style_text_font(s_bright_arc_lbl, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_color(s_bright_arc_lbl, lv_color_white(), 0);
     lv_label_set_text_fmt(s_bright_arc_lbl, "%d%%", ui_power_get_brightness());
-    lv_obj_align(s_bright_arc_lbl, LV_ALIGN_CENTER, 0, 8);
+    lv_obj_align(s_bright_arc_lbl, LV_ALIGN_CENTER, 0, -14);
 }
 
 /* --- Subpáginas de opciones (una lista con check en la elegida) ----------- */
@@ -233,26 +240,21 @@ static void page_options(const char *title, const char **labels, int n,
     lv_obj_t *p = page_create(title);
     s_opt_apply = apply;
 
+    /* Entre el título y el botón de volver, sin taparlo. */
     lv_obj_t *list = lv_obj_create(p);
     lv_obj_remove_style_all(list);
-    lv_obj_set_size(list, 200, 172);
-    lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, -6);
+    lv_obj_set_size(list, 192, 124);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 58);
     lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(list, 6, 0);
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
-    /* Los gestos que empiezan sobre la lista tienen que llegar a la página:
-     * si no, deslizar sobre las opciones (que es casi toda la pantalla) no
-     * volvería. La lista solo desplaza en vertical, así que el horizontal
-     * queda libre. */
-    lv_obj_add_flag(list, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     for (int i = 0; i < n; i++) {
         lv_obj_t *btn = lv_btn_create(list);
         lv_obj_set_size(btn, LV_PCT(100), 40);
         lv_obj_set_style_radius(btn, 20, 0);
         lv_obj_set_style_bg_color(btn, lv_color_hex(i == selected ? 0x2A4356 : COL_CARD), 0);
-        lv_obj_add_flag(btn, LV_OBJ_FLAG_EVENT_BUBBLE);
         lv_obj_add_event_cb(btn, opt_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
         lv_obj_t *lbl = lv_label_create(btn);

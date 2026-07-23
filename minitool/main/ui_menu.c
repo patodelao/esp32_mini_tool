@@ -264,11 +264,7 @@ static void screen_gesture_cb(lv_event_t *e)
     lv_indev_t *indev = lv_indev_get_act();
     if (!indev) return;
 
-    /* Volver acepta los dos sentidos horizontales: en una pantalla redonda sin
-     * botones físicos, obligar a recordar cuál es el "correcto" solo genera
-     * gestos que no responden. */
-    lv_dir_t dir = lv_indev_get_gesture_dir(indev);
-    if (dir == LV_DIR_RIGHT || dir == LV_DIR_LEFT) {
+    if (lv_indev_get_gesture_dir(indev) == LV_DIR_RIGHT) {
         /* Si esta tool se abrió desde otra (Config), volver a esa. */
         const tool_t *back = s_return_tool;
         s_return_tool = NULL;
