@@ -86,6 +86,16 @@ int  ui_power_get_night_end(void);
  * false si el reloj todavía no tiene la hora en hora. */
 bool ui_power_night_now(void);
 
+/* Silencio manual ("no molestar ahora"), independiente del horario. Lo usa el
+ * panel rápido: silenciar un rato no deberia obligar a tocar la franja
+ * nocturna. NO se persiste: es para el momento, y un silencio que sobrevive a
+ * un reinicio es una forma segura de perderse una alerta sin saber por que. */
+void ui_power_set_mute(bool on);
+bool ui_power_get_mute(void);
+
+/* true si NO hay que interrumpir ahora: por horario o por silencio manual. */
+bool ui_power_quiet_now(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -19,6 +19,7 @@
 #include "pedometer_service.h"
 #include "sensor_service.h"
 #include "sensor_alert.h"
+#include "ui_quick.h"
 
 LV_FONT_DECLARE(font_weather_28);
 
@@ -95,10 +96,29 @@ static void render_soil(void)
     lv_obj_add_flag(s_soil_lbl, LV_OBJ_FLAG_HIDDEN);
 }
 
+/* Un gesto tambien produce un CLICKED al soltar, y la caratula se cierra con
+ * cualquier toque: sin esta marca, deslizar hacia abajo abriria el panel y
+ * acto seguido cerraria la caratula debajo. */
+static bool s_gesture_used = false;
+
 static void wf_click_cb(lv_event_t *e)
 {
     (void)e;
+    if (s_gesture_used) { s_gesture_used = false; return; }
     wf_close();
+}
+
+/* Deslizar hacia abajo abre el panel rapido, como en cualquier reloj o
+ * telefono actual. */
+static void wf_gesture_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_indev_t *indev = lv_indev_get_act();
+    if (!indev) return;
+    if (lv_indev_get_gesture_dir(indev) == LV_DIR_BOTTOM) {
+        s_gesture_used = true;
+        ui_quick_show();
+    }
 }
 
 static void wf_tick_cb(lv_timer_t *t)
@@ -167,6 +187,7 @@ void ui_watchface_show(void)
     lv_obj_clear_flag(s_wf, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_wf, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_wf, wf_click_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(s_wf, wf_gesture_cb, LV_EVENT_GESTURE, NULL);
 
     /* Arco de segundos pegado al borde circular */
     s_arc = lv_arc_create(s_wf);

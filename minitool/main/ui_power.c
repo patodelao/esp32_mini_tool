@@ -67,6 +67,7 @@ static int  s_sens = UI_POWER_SENS_ALTA;
 static int  s_sleep_s = 45;      /* 0 = no apagar nunca */
 static bool s_inhibit = false;   /* algo pide que no se duerma (ver linterna) */
 static bool s_night = false;     /* modo noche habilitado */
+static bool s_mute = false;      /* silencio manual, no persistido */
 static int  s_night_start = 23;
 static int  s_night_end = 7;
 
@@ -130,6 +131,11 @@ bool ui_power_night_now(void)
     }
     return h >= s_night_start || h < s_night_end;          /* cruza medianoche */
 }
+
+void ui_power_set_mute(bool on) { s_mute = on; }
+bool ui_power_get_mute(void)    { return s_mute; }
+
+bool ui_power_quiet_now(void)   { return s_mute || ui_power_night_now(); }
 
 /* Brillo con el que corresponde encender ahora. */
 static int wake_brightness(void)
