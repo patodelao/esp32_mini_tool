@@ -78,4 +78,5 @@ const tool_t tool_wifiqr = {
     .accent = 0x9B59B6,
     .open = wifiqr_open,
     .close = wifiqr_close,
+    .hidden = true,   /* vive dentro de la tool Config */
 };

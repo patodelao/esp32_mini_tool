@@ -39,15 +39,31 @@ static const tool_t *s_current_tool = NULL;
 static lv_timer_t *s_idle_timer = NULL;
 static char s_menu_options[MENU_OPTIONS_BUF_SIZE];
 
+/* Mapa fila del roller -> índice en g_tools[]. Las tools marcadas 'hidden' no
+ * salen en el menú (viven dentro de Config), así que los índices ya no
+ * coinciden y hay que traducirlos. */
+static int s_visible[64];
+static int s_visible_count = 0;
+
+/* Tool a la que vuelve el gesto de "atrás" (NULL = menú principal). La fija
+ * ui_menu_open_tool para que salir de Wi-Fi devuelva a Config, no al menú. */
+static const tool_t *s_return_tool = NULL;
+
 /* Posición del menú a restaurar al volver de una tool (default 0 al encender) */
 static uint16_t s_return_pos = 0;
 
 #define ACCENT_DEFAULT 0x2E82C8
 
+/* Tool de la fila 'pos' del roller (traduce por el mapa de visibles). */
+static const tool_t *tool_at(int pos)
+{
+    if (pos < 0 || pos >= s_visible_count) return NULL;
+    return g_tools[s_visible[pos]];
+}
+
 static uint32_t pos_accent(int pos)
 {
-    if (pos < 0 || pos >= g_tools_count) return ACCENT_DEFAULT;
-    const tool_t *t = g_tools[pos];
+    const tool_t *t = tool_at(pos);
     return (t && t->accent) ? t->accent : ACCENT_DEFAULT;
 }
 
@@ -116,11 +132,18 @@ static void build_menu_options(void)
     size_t used = 0;
     s_menu_options[0] = '\0';
 
-    for (int i = 0; i < g_tools_count; i++) {
-        const tool_t *tool = g_tools[i];
+    /* Primero, qué tools salen en el menú. */
+    s_visible_count = 0;
+    for (int i = 0; i < g_tools_count && s_visible_count < (int)(sizeof(s_visible) / sizeof(s_visible[0])); i++) {
+        if (g_tools[i] && g_tools[i]->hidden) continue;
+        s_visible[s_visible_count++] = i;
+    }
+
+    for (int i = 0; i < s_visible_count; i++) {
+        const tool_t *tool = g_tools[s_visible[i]];
         const char *icon = (tool && tool->icon) ? tool->icon : LV_SYMBOL_DUMMY;
         const char *name = (tool && tool->name) ? tool->name : "Tool";
-        const char *sep = (i == (g_tools_count - 1)) ? "" : "\n";
+        const char *sep = (i == (s_visible_count - 1)) ? "" : "\n";
         int written = lv_snprintf(s_menu_options + used, MENU_OPTIONS_BUF_SIZE - used,
                                   "%s  %s%s", icon, name, sep);
         if (written <= 0 || (size_t)written >= (MENU_OPTIONS_BUF_SIZE - used)) break;
@@ -128,10 +151,8 @@ static void build_menu_options(void)
     }
 }
 
-static void do_open_tool(int idx)
+static void open_tool_ptr(const tool_t *tool)
 {
-    if (idx < 0 || idx >= g_tools_count) return;
-    const tool_t *tool = g_tools[idx];
     if (!tool) return;
 
     ESP_LOGI(TAG, "Abriendo herramienta: %s", tool->name ? tool->name : "(sin nombre)");
@@ -144,6 +165,22 @@ static void do_open_tool(int idx)
     s_current_tool = tool;
 
     if (tool->open) tool->open(lv_scr_act());
+}
+
+/* Apertura diferida: se llama desde el callback de un botón de otra tool, así
+ * que no se puede borrar su UI mientras LVGL procesa el evento. */
+static void open_async_cb(void *param)
+{
+    close_current_tool();
+    lv_obj_clean(lv_scr_act());
+    open_tool_ptr((const tool_t *)param);
+}
+
+void ui_menu_open_tool(const tool_t *tool)
+{
+    if (!tool) return;
+    s_return_tool = s_current_tool;   /* volver a quien la abrió */
+    lv_async_call(open_async_cb, (void *)tool);
 }
 
 /* Recolorea el acento al cambiar de selección con el scroll. */
@@ -180,9 +217,10 @@ static void roller_click_cb(lv_event_t *e)
     if (p.x < a.x1 + ICON_ZONE_X0 || p.x > a.x1 + ICON_ZONE_X1) return;
 
     uint16_t selected = lv_roller_get_selected(s_menu_roller);
-    if (selected >= (uint16_t)g_tools_count) return;
+    if (selected >= (uint16_t)s_visible_count) return;
     s_return_pos = selected;
-    do_open_tool((int)selected);
+    s_return_tool = NULL;              /* se abrió desde el menú */
+    open_tool_ptr(tool_at((int)selected));
 }
 
 /*
@@ -192,7 +230,7 @@ static void roller_click_cb(lv_event_t *e)
 static void nav_scrub_cb(lv_event_t *e)
 {
     (void)e;
-    if (!s_menu_roller || !s_nav_zone || g_tools_count <= 0) return;
+    if (!s_menu_roller || !s_nav_zone || s_visible_count <= 0) return;
 
     lv_indev_t *indev = lv_indev_get_act();
     if (!indev) return;
@@ -208,8 +246,8 @@ static void nav_scrub_cb(lv_event_t *e)
     if (rel < 0) rel = 0;
     if (rel > w) rel = w;
 
-    int idx = (rel * g_tools_count) / (w + 1);
-    if (idx >= g_tools_count) idx = g_tools_count - 1;
+    int idx = (rel * s_visible_count) / (w + 1);
+    if (idx >= s_visible_count) idx = s_visible_count - 1;
     if (idx < 0) idx = 0;
 
     if ((uint16_t)idx != lv_roller_get_selected(s_menu_roller)) {
@@ -227,9 +265,13 @@ static void screen_gesture_cb(lv_event_t *e)
     if (!indev) return;
 
     if (lv_indev_get_gesture_dir(indev) == LV_DIR_RIGHT) {
+        /* Si esta tool se abrió desde otra (Config), volver a esa. */
+        const tool_t *back = s_return_tool;
+        s_return_tool = NULL;
         close_current_tool();
         lv_obj_clean(lv_scr_act());
-        create_main_menu();
+        if (back) open_tool_ptr(back);
+        else      create_main_menu();
     }
 }
 
@@ -274,7 +316,7 @@ void create_main_menu(void)
     lv_obj_center(s_pos_arc);
     lv_arc_set_bg_angles(s_pos_arc, 55, 125);          /* segmento inferior */
     lv_arc_set_mode(s_pos_arc, LV_ARC_MODE_REVERSE);   /* llena de izq->der con el índice */
-    lv_arc_set_range(s_pos_arc, 0, (g_tools_count > 1) ? (g_tools_count - 1) : 1);
+    lv_arc_set_range(s_pos_arc, 0, (s_visible_count > 1) ? (s_visible_count - 1) : 1);
     lv_obj_clear_flag(s_pos_arc, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_arc_width(s_pos_arc, 5, LV_PART_MAIN);
     lv_obj_set_style_arc_color(s_pos_arc, lv_color_hex(0x142433), LV_PART_MAIN);
@@ -340,7 +382,7 @@ void create_main_menu(void)
     lv_obj_add_event_cb(s_nav_zone, nav_scrub_cb, LV_EVENT_PRESSING, NULL);
 
     /* Volver a la posición desde la que se abrió la última tool (default 0) */
-    if (s_return_pos < (uint16_t)g_tools_count) {
+    if (s_return_pos < (uint16_t)s_visible_count) {
         lv_roller_set_selected(s_menu_roller, s_return_pos, LV_ANIM_OFF);
     }
 

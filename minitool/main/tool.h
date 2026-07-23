@@ -7,6 +7,8 @@
  */
 #pragma once
 
+#include <stdbool.h>
+
 #include "lvgl.h"
 
 #ifdef __cplusplus
@@ -19,6 +21,9 @@ typedef struct {
     uint32_t accent;                  /* Color de acento 0xRRGGBB (0 = default) */
     void (*open)(lv_obj_t *parent);   /* Construye la UI dentro de 'parent' */
     void (*close)(void);              /* Libera timers/recursos (puede ser NULL) */
+    bool hidden;                      /* No sale en el menú principal: se abre
+                                       * desde otra tool (p.ej. Config agrupa
+                                       * las de comunicaciones). */
 } tool_t;
 
 /* Registro global de herramientas (definido en tools.c). */

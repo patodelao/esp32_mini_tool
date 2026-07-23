@@ -5,14 +5,16 @@
  * (el watchface) pero la pantalla nunca se apagaba, que es de donde sale casi
  * todo el consumo de la placa.
  *
- * Comportamiento, al estilo de un reloj:
- *   - sin tocar nada, a los 20 s aparece el watchface (eso ya lo hacía ui_menu),
- *   - a los SLEEP_MS se apaga el backlight,
- *   - se despierta al tocar la pantalla, al levantar la muñeca (gesto detectado
- *     con el acelerómetro) o cuando entra una notificación.
+ * Comportamiento:
+ *   - sin tocar nada, a los 20 s aparece el watchface (eso lo hace ui_menu),
+ *   - al cumplirse el tiempo configurado se apaga el backlight,
+ *   - se despierta al tocar la pantalla, al moverlo (cualquier manipulación) o
+ *     cuando entra una notificación.
  *
  * Todo corre en un lv_timer, o sea en el hilo de LVGL: el IMU se lee desde ahí
  * igual que el touch, así que no hay acceso concurrente al bus I2C.
+ *
+ * Los ajustes se editan desde la tool Config y se guardan en NVS.
  */
 #pragma once
 
@@ -21,6 +23,14 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* Qué tan poco movimiento hace falta para despertarlo. */
+typedef enum {
+    UI_POWER_SENS_BAJA = 0,   /* hay que levantarlo o girarlo con ganas   */
+    UI_POWER_SENS_MEDIA,      /* moverlo sobre la mesa alcanza            */
+    UI_POWER_SENS_ALTA,       /* un roce; puede despertarlo la vibración  */
+    UI_POWER_SENS_COUNT,
+} ui_power_sens_t;
 
 /* Arranca la gestión de energía. Llamar una vez, con LVGL ya inicializado
  * (después de bsp_init) y bajo el lock. Idempotente. */
@@ -33,13 +43,22 @@ void ui_power_wake(void);
 /* true si la pantalla está apagada. */
 bool ui_power_asleep(void);
 
-/* Brillo con el que se enciende la pantalla (0..100). Se guarda en NVS. */
+/* Brillo con el que se enciende la pantalla (10..100). */
 void ui_power_set_brightness(int pct);
 int  ui_power_get_brightness(void);
 
-/* Despertar por gesto (levantar la muñeca). Se guarda en NVS. */
-void ui_power_set_raise_wake(bool on);
-bool ui_power_get_raise_wake(void);
+/* Despertar al mover. */
+void ui_power_set_motion_wake(bool on);
+bool ui_power_get_motion_wake(void);
+
+/* Sensibilidad del despertar por movimiento. */
+void ui_power_set_sensitivity(ui_power_sens_t s);
+ui_power_sens_t ui_power_get_sensitivity(void);
+const char *ui_power_sens_name(ui_power_sens_t s);
+
+/* Segundos de inactividad hasta apagar la pantalla. 0 = no apagar nunca. */
+void ui_power_set_sleep_s(int seconds);
+int  ui_power_get_sleep_s(void);
 
 #ifdef __cplusplus
 }

@@ -24,6 +24,7 @@ extern const tool_t tool_sensors;
 extern const tool_t tool_control;
 extern const tool_t tool_alerts;
 extern const tool_t tool_wifiqr;
+extern const tool_t tool_settings;
 
 const tool_t *const g_tools[] = {
     &tool_clock,
@@ -33,10 +34,6 @@ const tool_t *const g_tools[] = {
     &tool_dice,
     &tool_flashlight,
     &tool_weather,
-    &tool_wifi,
-    &tool_wifiscan,
-    &tool_netinfo,
-    &tool_bt,
     &tool_gym,
     //&tool_tracker,
     &tool_dashboard,
@@ -44,8 +41,15 @@ const tool_t *const g_tools[] = {
     &tool_sensors,
     &tool_alerts,
     &tool_control,
-    &tool_wifiqr,
+    &tool_settings,
 
+    /* Las de abajo están marcadas 'hidden': no salen en el menú principal,
+     * se abren desde la tool Config, que las agrupa. */
+    &tool_wifi,
+    &tool_wifiscan,
+    &tool_netinfo,
+    &tool_wifiqr,
+    &tool_bt,
 };
 
 const int g_tools_count = (int)(sizeof(g_tools) / sizeof(g_tools[0]));

@@ -98,4 +98,5 @@ const tool_t tool_netinfo = {
     .accent = 0x8FA8C8,
     .open = netinfo_open,
     .close = netinfo_close,
+    .hidden = true,   /* vive dentro de la tool Config */
 };

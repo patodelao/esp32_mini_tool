@@ -1,14 +1,20 @@
 /*
  * ui_power.c — Implementación del dormir/despertar de la pantalla.
  *
- * Detección del gesto de levantar la muñeca, con acelerómetro solamente:
- * se guarda 1 segundo de historia del eje Z (el perpendicular a la pantalla) y
- * se busca la transición "la pantalla NO miraba hacia arriba" -> "ahora sí".
- * Con el chip montado invertido, pantalla hacia arriba lee az ≈ -1g (lo mismo
- * que documenta tool_level.c).
+ * Despertar por movimiento: en vez de buscar el gesto específico de levantar
+ * la muñeca (que exige un movimiento amplio y bien orientado), se despierta
+ * ante CUALQUIER manipulación. El reloj está sobre el escritorio y sin
+ * batería, así que lo que se busca es que se encienda al agarrarlo, no ahorrar
+ * energía a costa de la respuesta.
  *
- * Pedir además un salto mínimo evita que el gesto se dispare por vibración o
- * por dejar el reloj apoyado: hace falta un movimiento real.
+ * Se miran dos señales y alcanza con una:
+ *   - el giroscopio, que delata cualquier rotación por chica que sea;
+ *   - el cambio del vector de gravedad entre lecturas, que capta inclinaciones
+ *     y desplazamientos.
+ *
+ * La sensibilidad se configura desde la tool Config, porque el punto justo
+ * depende de dónde esté apoyado: en un escritorio donde se teclea fuerte, la
+ * vibración de la mesa puede alcanzar para despertarlo.
  */
 #include "ui_power.h"
 #include "bsp.h"
@@ -18,29 +24,36 @@
 #include "esp_log.h"
 #include "nvs.h"
 
+#include <math.h>
+
 static const char *TAG = "ui_power";
 
-#define SLEEP_MS        45000   /* inactividad hasta apagar la pantalla */
-#define TICK_MS           200   /* con la pantalla apagada, ritmo del IMU */
-#define RAISE_HIST          5   /* muestras de historia (5 x 200 ms = 1 s) */
+#define TICK_MS  100   /* ritmo del IMU con la pantalla apagada */
 
-/* Umbrales del gesto, en g sobre el eje perpendicular a la pantalla. */
-#define RAISE_FACING_UP  -0.75f  /* mirándote */
-#define RAISE_WAS_AWAY   -0.45f  /* antes NO te miraba */
-#define RAISE_MIN_JUMP    0.35f  /* cambio mínimo, para exigir movimiento real */
+/* Umbrales por sensibilidad: rotación (grados/s) y cambio de aceleración (g).
+ * Alcanza con superar uno de los dos. */
+static const struct { float gyro_dps; float accel_g; const char *name; } SENS[] = {
+    { 45.0f, 0.20f, "Baja"  },
+    { 15.0f, 0.07f, "Media" },
+    {  6.0f, 0.03f, "Alta"  },
+};
 
 #define PWR_NS      "uipower"
 #define KEY_BRIGHT  "bright"
-#define KEY_RAISE   "raise"
+#define KEY_MOTION  "motion"
+#define KEY_SENS    "sens"
+#define KEY_SLEEP   "sleep_s"
 
 static lv_timer_t *s_timer = NULL;
-static bool  s_asleep = false;
-static int   s_brightness = 100;
-static bool  s_raise_wake = true;
+static bool s_asleep = false;
+static int  s_brightness = 100;
+static bool s_motion_wake = true;
+static int  s_sens = UI_POWER_SENS_MEDIA;
+static int  s_sleep_s = 45;      /* 0 = no apagar nunca */
 
-static float s_az[RAISE_HIST];
-static int   s_az_n = 0;    /* cuántas muestras válidas hay */
-static int   s_az_head = 0;
+/* Última lectura del acelerómetro, para medir el cambio entre muestras. */
+static float s_pax = 0, s_pay = 0, s_paz = 0;
+static bool  s_have_prev = false;
 
 /* --------------------------------- NVS ---------------------------------- */
 
@@ -50,7 +63,9 @@ static void settings_load(void)
     if (nvs_open(PWR_NS, NVS_READONLY, &h) != ESP_OK) return;
     int32_t v;
     if (nvs_get_i32(h, KEY_BRIGHT, &v) == ESP_OK && v >= 10 && v <= 100) s_brightness = (int)v;
-    if (nvs_get_i32(h, KEY_RAISE, &v) == ESP_OK) s_raise_wake = (v != 0);
+    if (nvs_get_i32(h, KEY_MOTION, &v) == ESP_OK) s_motion_wake = (v != 0);
+    if (nvs_get_i32(h, KEY_SENS, &v) == ESP_OK && v >= 0 && v < UI_POWER_SENS_COUNT) s_sens = (int)v;
+    if (nvs_get_i32(h, KEY_SLEEP, &v) == ESP_OK && v >= 0 && v <= 3600) s_sleep_s = (int)v;
     nvs_close(h);
 }
 
@@ -59,7 +74,9 @@ static void settings_save(void)
     nvs_handle_t h;
     if (nvs_open(PWR_NS, NVS_READWRITE, &h) != ESP_OK) return;
     nvs_set_i32(h, KEY_BRIGHT, (int32_t)s_brightness);
-    nvs_set_i32(h, KEY_RAISE, s_raise_wake ? 1 : 0);
+    nvs_set_i32(h, KEY_MOTION, s_motion_wake ? 1 : 0);
+    nvs_set_i32(h, KEY_SENS,   (int32_t)s_sens);
+    nvs_set_i32(h, KEY_SLEEP,  (int32_t)s_sleep_s);
     nvs_commit(h);
     nvs_close(h);
 }
@@ -70,7 +87,7 @@ static void screen_sleep(void)
 {
     if (s_asleep) return;
     s_asleep = true;
-    s_az_n = 0;                 /* la historia del gesto arranca de cero */
+    s_have_prev = false;        /* la referencia de movimiento arranca limpia */
     bsp_backlight_set(0);
     ESP_LOGI(TAG, "Pantalla apagada");
 }
@@ -88,24 +105,32 @@ void ui_power_wake(void)
 
 bool ui_power_asleep(void) { return s_asleep; }
 
-/* ------------------------------ Gesto de levantar ----------------------- */
+/* -------------------------------- Movimiento ---------------------------- */
 
-/* true si el eje Z pasó de no mirarte a mirarte dentro de la ventana. */
-static bool raise_detected(float az)
+static bool motion_detected(void)
 {
-    s_az[s_az_head] = az;
-    s_az_head = (s_az_head + 1) % RAISE_HIST;
-    if (s_az_n < RAISE_HIST) { s_az_n++; return false; }   /* aún llenando */
+    if (!qmi8658_available()) return false;
 
-    /* La muestra más vieja de la ventana es la que acabamos de pisar. */
-    float oldest = s_az[s_az_head];
+    /* El giroscopio es lo más sensible a que alguien lo agarre: cualquier
+     * rotación, por mínima que sea, se ve acá antes que en la gravedad. */
+    float gx, gy, gz;
+    if (qmi8658_read_gyro(&gx, &gy, &gz) == ESP_OK) {
+        float rot = fabsf(gx) + fabsf(gy) + fabsf(gz);
+        if (rot > SENS[s_sens].gyro_dps) return true;
+    }
 
-    if (az > RAISE_FACING_UP) return false;        /* todavía no te mira */
-    if (oldest < RAISE_WAS_AWAY) return false;     /* ya te miraba: no hay gesto */
-    if (oldest - az < RAISE_MIN_JUMP) return false;/* movimiento demasiado chico */
+    float ax, ay, az;
+    if (qmi8658_read_accel(&ax, &ay, &az) != ESP_OK) return false;
 
-    s_az_n = 0;   /* consumir la ventana para no re-disparar con la misma */
-    return true;
+    if (!s_have_prev) {         /* primera muestra: solo tomar referencia */
+        s_pax = ax; s_pay = ay; s_paz = az;
+        s_have_prev = true;
+        return false;
+    }
+
+    float d = fabsf(ax - s_pax) + fabsf(ay - s_pay) + fabsf(az - s_paz);
+    s_pax = ax; s_pay = ay; s_paz = az;
+    return d > SENS[s_sens].accel_g;
 }
 
 /* --------------------------------- Tick --------------------------------- */
@@ -115,24 +140,22 @@ static void tick_cb(lv_timer_t *t)
     (void)t;
 
     uint32_t idle = lv_disp_get_inactive_time(NULL);
+    uint32_t sleep_ms = (uint32_t)s_sleep_s * 1000u;
 
     if (!s_asleep) {
-        if (idle > SLEEP_MS) screen_sleep();
+        if (s_sleep_s > 0 && idle > sleep_ms) screen_sleep();
         return;
     }
 
-    /* Dormida: cualquier toque reinicia el contador de LVGL. */
-    if (idle < SLEEP_MS) {
+    /* Dormida: tocar la pantalla reinicia el contador de inactividad de LVGL,
+     * así que un toque siempre la despierta, haya o no IMU. */
+    if (idle < sleep_ms) {
         ui_power_wake();
         return;
     }
 
-    if (!s_raise_wake || !qmi8658_available()) return;
-
-    float ax, ay, az;
-    if (qmi8658_read_accel(&ax, &ay, &az) != ESP_OK) return;
-    if (raise_detected(az)) {
-        ESP_LOGI(TAG, "Gesto de levantar detectado (az %.2f)", (double)az);
+    if (s_motion_wake && motion_detected()) {
+        ESP_LOGI(TAG, "Movimiento detectado");
         ui_power_wake();
     }
 }
@@ -145,8 +168,8 @@ void ui_power_init(void)
     settings_load();
     bsp_backlight_set(s_brightness);
     s_timer = lv_timer_create(tick_cb, TICK_MS, NULL);
-    ESP_LOGI(TAG, "Energía lista (apaga a los %d s, gesto %s)",
-             SLEEP_MS / 1000, s_raise_wake ? "on" : "off");
+    ESP_LOGI(TAG, "Energía lista (apaga a los %d s, movimiento %s/%s)",
+             s_sleep_s, s_motion_wake ? "on" : "off", SENS[s_sens].name);
 }
 
 void ui_power_set_brightness(int pct)
@@ -160,10 +183,38 @@ void ui_power_set_brightness(int pct)
 
 int ui_power_get_brightness(void) { return s_brightness; }
 
-void ui_power_set_raise_wake(bool on)
+void ui_power_set_motion_wake(bool on)
 {
-    s_raise_wake = on;
+    s_motion_wake = on;
+    s_have_prev = false;
     settings_save();
 }
 
-bool ui_power_get_raise_wake(void) { return s_raise_wake; }
+bool ui_power_get_motion_wake(void) { return s_motion_wake; }
+
+void ui_power_set_sensitivity(ui_power_sens_t s)
+{
+    if (s < 0 || s >= UI_POWER_SENS_COUNT) return;
+    s_sens = (int)s;
+    s_have_prev = false;
+    settings_save();
+}
+
+ui_power_sens_t ui_power_get_sensitivity(void) { return (ui_power_sens_t)s_sens; }
+
+const char *ui_power_sens_name(ui_power_sens_t s)
+{
+    if (s < 0 || s >= UI_POWER_SENS_COUNT) return "?";
+    return SENS[s].name;
+}
+
+void ui_power_set_sleep_s(int seconds)
+{
+    if (seconds < 0)    seconds = 0;
+    if (seconds > 3600) seconds = 3600;
+    s_sleep_s = seconds;
+    if (s_sleep_s == 0) ui_power_wake();   /* "nunca": encenderla ya */
+    settings_save();
+}
+
+int ui_power_get_sleep_s(void) { return s_sleep_s; }

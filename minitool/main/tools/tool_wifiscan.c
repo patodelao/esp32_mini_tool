@@ -136,4 +136,5 @@ const tool_t tool_wifiscan = {
     .accent = 0x2ED9A3,
     .open = wifiscan_open,
     .close = wifiscan_close,
+    .hidden = true,   /* vive dentro de la tool Config */
 };

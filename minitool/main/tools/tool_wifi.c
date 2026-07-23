@@ -137,4 +137,5 @@ const tool_t tool_wifi = {
     .accent = 0x4AA8FF,
     .open = wifi_open,
     .close = wifi_close,
+    .hidden = true,   /* vive dentro de la tool Config */
 };

@@ -122,4 +122,5 @@ const tool_t tool_bt = {
     .accent = 0x3E7BFF,
     .open = bt_open,
     .close = bt_close,
+    .hidden = true,   /* vive dentro de la tool Config */
 };
