@@ -50,6 +50,7 @@ static int  s_brightness = 100;
 static bool s_motion_wake = true;
 static int  s_sens = UI_POWER_SENS_MEDIA;
 static int  s_sleep_s = 45;      /* 0 = no apagar nunca */
+static bool s_inhibit = false;   /* algo pide que no se duerma (ver linterna) */
 
 /* Última lectura del acelerómetro, para medir el cambio entre muestras. */
 static float s_pax = 0, s_pay = 0, s_paz = 0;
@@ -105,6 +106,14 @@ void ui_power_wake(void)
 
 bool ui_power_asleep(void) { return s_asleep; }
 
+void ui_power_inhibit(bool on)
+{
+    s_inhibit = on;
+    /* Al activarlo, encender ya; al soltarlo, reiniciar el conteo para no
+     * apagar de golpe apenas se cierra la tool. */
+    ui_power_wake();
+}
+
 /* -------------------------------- Movimiento ---------------------------- */
 
 static bool motion_detected(void)
@@ -143,7 +152,7 @@ static void tick_cb(lv_timer_t *t)
     uint32_t sleep_ms = (uint32_t)s_sleep_s * 1000u;
 
     if (!s_asleep) {
-        if (s_sleep_s > 0 && idle > sleep_ms) screen_sleep();
+        if (!s_inhibit && s_sleep_s > 0 && idle > sleep_ms) screen_sleep();
         return;
     }
 

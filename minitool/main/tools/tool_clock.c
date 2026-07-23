@@ -8,6 +8,7 @@
  *            incluso si el usuario salió de la herramienta.
  */
 #include "tool.h"
+#include "ui_power.h"
 
 #include <stdio.h>
 #include <time.h>
@@ -89,6 +90,11 @@ static void flash_tick_cb(lv_timer_t *t)
 static void flash_alarm_show(void)
 {
     if (s_flash) return;
+
+    /* La alarma es SOLO visual (no hay zumbador): si suena con la pantalla
+     * dormida, no se entera nadie. */
+    ui_power_wake();
+
     s_flash = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(s_flash);
     lv_obj_set_size(s_flash, LV_PCT(100), LV_PCT(100));

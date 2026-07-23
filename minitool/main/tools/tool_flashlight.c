@@ -3,6 +3,8 @@
  * Tocar cicla los modos: blanco, cálido, rojo (visión nocturna), verde, azul.
  */
 #include "tool.h"
+#include "bsp.h"
+#include "ui_power.h"
 
 static const lv_color_t k_colors[] = {
     LV_COLOR_MAKE(0xFF, 0xFF, 0xFF), /* blanco */
@@ -35,6 +37,12 @@ static void tap_cb(lv_event_t *e)
 
 static void flashlight_open(lv_obj_t *parent)
 {
+    /* Una linterna se usa sin tocar la pantalla, así que el apagado por
+     * inactividad la mataría a los segundos. Y va al máximo de brillo: de nada
+     * sirve alumbrar con el 30 % que quizá esté configurado. */
+    ui_power_inhibit(true);
+    bsp_backlight_set(100);
+
     s_panel = lv_obj_create(parent);
     lv_obj_remove_style_all(s_panel);
     lv_obj_set_size(s_panel, LV_PCT(100), LV_PCT(100));
@@ -52,6 +60,8 @@ static void flashlight_open(lv_obj_t *parent)
 
 static void flashlight_close(void)
 {
+    bsp_backlight_set(ui_power_get_brightness());   /* devolver el brillo */
+    ui_power_inhibit(false);
     s_panel = NULL;
     s_hint = NULL;
 }

@@ -43,6 +43,12 @@ void ui_power_wake(void);
 /* true si la pantalla está apagada. */
 bool ui_power_asleep(void);
 
+/* Impide que la pantalla se duerma mientras dure algo que se mira sin tocar.
+ * La linterna es el caso claro: se apagaría sola justo cuando la estás usando.
+ * Al activarlo despierta la pantalla; al soltarlo, el conteo de inactividad
+ * arranca de nuevo. Llamar siempre en pares (open/close de la tool). */
+void ui_power_inhibit(bool on);
+
 /* Brillo con el que se enciende la pantalla (10..100). */
 void ui_power_set_brightness(int pct);
 int  ui_power_get_brightness(void);

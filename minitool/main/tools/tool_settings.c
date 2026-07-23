@@ -356,7 +356,8 @@ static lv_obj_t *card_create(const char *icon, uint32_t chip_color,
     lv_obj_set_style_text_font(t, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(t, lv_color_hex(COL_TITLE), 0);
     lv_label_set_text(t, title);
-    lv_obj_align(t, with_value ? LV_ALIGN_LEFT_MID : LV_ALIGN_LEFT_MID, 52, with_value ? -9 : 0);
+    /* Con valor, el título sube para dejarle lugar debajo. */
+    lv_obj_align(t, LV_ALIGN_LEFT_MID, 52, with_value ? -9 : 0);
 
     return card;
 }
