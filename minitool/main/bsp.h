@@ -9,6 +9,7 @@
 
 #include "lvgl.h"
 #include "esp_lcd_touch.h"
+#include "driver/i2c_master.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,9 +20,15 @@ extern "C" {
 #define BSP_LCD_V_RES 240
 
 /* Puerto e I2C compartido (touch CST816S + IMU QMI8658) */
-#define BSP_I2C_NUM   I2C_NUM_0
+#define BSP_I2C_NUM   0
 #define BSP_I2C_SDA   6
 #define BSP_I2C_SCL   7
+#define BSP_I2C_HZ    400000
+
+/* Bus I2C maestro compartido. Cada driver se cuelga con
+ * i2c_master_bus_add_device(); el bus serializa los accesos por su cuenta.
+ * Válido recién después de bsp_init(). */
+i2c_master_bus_handle_t bsp_i2c_bus(void);
 
 /*
  * Inicializa todo el hardware y LVGL, y arranca la task de renderizado.

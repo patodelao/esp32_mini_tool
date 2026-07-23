@@ -15,7 +15,7 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_gc9a01.h"
@@ -138,23 +138,40 @@ static void lvgl_task(void *arg)
 }
 
 /* ------------------------- Inicialización de hardware ------------------------- */
+
+/*
+ * I2C con el driver nuevo (driver/i2c_master.h). El legacy (driver/i2c.h) está
+ * deprecado en ESP-IDF 5.3 y lo avisa en cada arranque.
+ *
+ * El cambio de fondo es el modelo: antes se instalaba un driver por puerto y
+ * cada quien hacía transacciones contra un número de puerto; ahora se crea un
+ * BUS y cada chip se registra como dispositivo. El bus serializa los accesos
+ * con su propio lock, así que el touch y el IMU pueden convivir sin que haya
+ * que coordinarlos desde afuera.
+ */
+static i2c_master_bus_handle_t s_i2c_bus = NULL;
+
 static void i2c_init(void)
 {
-    const i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
+    const i2c_master_bus_config_t conf = {
+        .i2c_port = BSP_I2C_NUM,
         .sda_io_num = BSP_I2C_SDA,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_io_num = BSP_I2C_SCL,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 400000,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
     };
-    ESP_ERROR_CHECK(i2c_param_config(BSP_I2C_NUM, &conf));
-    ESP_ERROR_CHECK(i2c_driver_install(BSP_I2C_NUM, conf.mode, 0, 0, 0));
+    ESP_ERROR_CHECK(i2c_new_master_bus(&conf, &s_i2c_bus));
 }
+
+i2c_master_bus_handle_t bsp_i2c_bus(void) { return s_i2c_bus; }
 
 static void touch_init(void)
 {
     esp_lcd_panel_io_i2c_config_t io_config = ESP_LCD_TOUCH_IO_I2C_CST816S_CONFIG();
+    /* El driver nuevo exige la velocidad por dispositivo; la macro del
+     * componente no la fija. */
+    io_config.scl_speed_hz = BSP_I2C_HZ;
     esp_lcd_touch_config_t cfg = {
         .x_max = BSP_LCD_H_RES,
         .y_max = BSP_LCD_V_RES,
@@ -165,7 +182,9 @@ static void touch_init(void)
         .interrupt_callback = touch_isr_cb,
     };
     esp_lcd_panel_io_handle_t io = NULL;
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c((esp_lcd_i2c_bus_handle_t)0, &io_config, &io));
+    /* Pasarle el handle del bus (y no un número de puerto) es lo que hace que
+     * esp_lcd use la variante nueva del driver: la macro despacha por tipo. */
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(s_i2c_bus, &io_config, &io));
     ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_cst816s(io, &cfg, &s_tp));
 }
 

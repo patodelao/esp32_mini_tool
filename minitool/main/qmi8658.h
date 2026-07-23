@@ -2,9 +2,12 @@
  * qmi8658.h — Driver mínimo del IMU QMI8658 (acelerómetro + giroscopio, 6 ejes)
  * integrado en la Waveshare ESP32-S3-Touch-LCD-1.28.
  *
- * Comparte el bus I2C del touch (BSP_I2C_NUM); bsp_init() debe haberse
- * ejecutado antes de qmi8658_init(). Las lecturas se hacen desde lv_timers
- * (task de LVGL), igual que el touch, así que no hay acceso concurrente al bus.
+ * Comparte el bus I2C del touch (bsp_i2c_bus()); bsp_init() debe haberse
+ * ejecutado antes de qmi8658_init(): el bus se crea ahí.
+ *
+ * Con el driver i2c_master el bus serializa los accesos con su propio lock, así
+ * que ya no hace falta que las lecturas salgan todas del hilo de LVGL para
+ * evitar pisarse con el touch (aunque hoy siga siendo así).
  */
 #pragma once
 
