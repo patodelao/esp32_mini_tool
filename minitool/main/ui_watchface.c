@@ -1,14 +1,24 @@
 /*
  * ui_watchface.c — Carátula de reposo: hora grande + arco de segundos.
+ *
+ * Abajo, dos datos que uno quiere mirar de reojo sin entrar a ninguna tool:
+ * los pasos del día y la humedad del suelo de la planta. Este último se pone
+ * rojo cuando hay que regar, que es la única información del home-lab que
+ * exige una acción concreta.
  */
 #include "ui_watchface.h"
 
+#include <stdio.h>
+#include <string.h>
 #include <time.h>
 
 #include "lvgl.h"
 #include "wifi_manager.h"
 #include "bt_manager.h"
 #include "weather_service.h"
+#include "pedometer_service.h"
+#include "sensor_service.h"
+#include "sensor_alert.h"
 
 LV_FONT_DECLARE(font_weather_28);
 
@@ -20,6 +30,8 @@ static lv_obj_t *s_wifi_icon = NULL;
 static lv_obj_t *s_bt_icon = NULL;
 static lv_obj_t *s_wx_emoji = NULL;
 static lv_obj_t *s_wx_temp = NULL;
+static lv_obj_t *s_steps_lbl = NULL;   /* pasos de hoy */
+static lv_obj_t *s_soil_lbl = NULL;    /* humedad del suelo de la planta */
 static lv_timer_t *s_timer = NULL;
 static uint32_t s_wx_gen = 0xFFFFFFFF;
 
@@ -39,6 +51,48 @@ static void wf_close(void)
     s_time_label = s_date_label = NULL;
     s_wifi_icon = s_bt_icon = NULL;
     s_wx_emoji = s_wx_temp = NULL;
+    s_steps_lbl = s_soil_lbl = NULL;
+}
+
+/* Pasos del día, compactos: "1234" o "12.3k" para que no desborde. */
+static void render_steps(void)
+{
+    if (!s_steps_lbl) return;
+    uint32_t s = pedometer_steps();
+    char buf[16];
+    if (s < 10000) snprintf(buf, sizeof(buf), "%lu", (unsigned long)s);
+    else           snprintf(buf, sizeof(buf), "%.1fk", (double)s / 1000.0);
+    lv_label_set_text(s_steps_lbl, buf);
+}
+
+/* Humedad del suelo del primer sensor de suelo que haya. Rojo = hay que regar,
+ * gris = el dato está viejo. Si no hay sensor, no se muestra nada. */
+static void render_soil(void)
+{
+    if (!s_soil_lbl) return;
+
+    int n = sensor_count();
+    for (int i = 0; i < n; i++) {
+        char id[SENSOR_ID_MAX], val[16];
+        uint32_t age = 0;
+        if (!sensor_get(i, id, sizeof(id), val, sizeof(val), &age)) continue;
+        if (strcmp(sensor_leaf(id), "suelo") != 0) continue;
+
+        char buf[24];
+        snprintf(buf, sizeof(buf), LV_SYMBOL_TINT " %s%%", val);
+        lv_label_set_text(s_soil_lbl, buf);
+
+        sensor_alert_state_t st = sensor_alert_state(id);
+        lv_color_t c = lv_color_hex(0x8899AA);
+        if (age > sensor_alert_stale_limit(id))   c = lv_color_hex(0x4A5560);
+        else if (st == SENSOR_ALERT_LOW)          c = lv_color_hex(0xE74C3C);
+        else if (st == SENSOR_ALERT_HIGH)         c = lv_color_hex(0xE0A030);
+        lv_obj_set_style_text_color(s_soil_lbl, c, 0);
+
+        lv_obj_clear_flag(s_soil_lbl, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_add_flag(s_soil_lbl, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void wf_click_cb(lv_event_t *e)
@@ -81,6 +135,9 @@ static void wf_tick_cb(lv_timer_t *t)
     } else {
         lv_obj_add_flag(s_bt_icon, LV_OBJ_FLAG_HIDDEN);
     }
+
+    render_steps();
+    render_soil();
 
     /* Clima: refresca (auto-limitado) y refleja la caché compartida */
     weather_service_refresh(false);
@@ -153,16 +210,31 @@ void ui_watchface_show(void)
     lv_obj_set_style_text_color(s_date_label, lv_color_hex(0x8899AA), 0);
     lv_obj_align(s_date_label, LV_ALIGN_CENTER, 0, 28);
 
-    /* Iconos de estado */
+    /* Iconos de estado: arriba, como barra de estado, para dejar el borde
+     * inferior libre para los datos. */
     s_wifi_icon = lv_label_create(s_wf);
     lv_label_set_text(s_wifi_icon, LV_SYMBOL_WIFI);
-    lv_obj_set_style_text_color(s_wifi_icon, lv_color_white(), 0);
-    lv_obj_align(s_wifi_icon, LV_ALIGN_CENTER, -18, 62);
+    lv_obj_set_style_text_color(s_wifi_icon, lv_color_hex(0x8899AA), 0);
+    lv_obj_align(s_wifi_icon, LV_ALIGN_TOP_MID, -14, 20);
 
     s_bt_icon = lv_label_create(s_wf);
     lv_label_set_text(s_bt_icon, LV_SYMBOL_BLUETOOTH);
-    lv_obj_set_style_text_color(s_bt_icon, lv_color_white(), 0);
-    lv_obj_align(s_bt_icon, LV_ALIGN_CENTER, 18, 62);
+    lv_obj_set_style_text_color(s_bt_icon, lv_color_hex(0x8899AA), 0);
+    lv_obj_align(s_bt_icon, LV_ALIGN_TOP_MID, 14, 20);
+
+    /* Fila inferior: pasos y planta. */
+    s_steps_lbl = lv_label_create(s_wf);
+    lv_obj_set_style_text_font(s_steps_lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(s_steps_lbl, lv_color_hex(0x35D07F), 0);
+    lv_label_set_text(s_steps_lbl, "0");
+    lv_obj_align(s_steps_lbl, LV_ALIGN_CENTER, -42, 62);
+
+    s_soil_lbl = lv_label_create(s_wf);
+    lv_obj_set_style_text_font(s_soil_lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(s_soil_lbl, lv_color_hex(0x8899AA), 0);
+    lv_label_set_text(s_soil_lbl, "");
+    lv_obj_align(s_soil_lbl, LV_ALIGN_CENTER, 34, 62);
+    lv_obj_add_flag(s_soil_lbl, LV_OBJ_FLAG_HIDDEN);
 
     wf_tick_cb(NULL);
     s_timer = lv_timer_create(wf_tick_cb, 1000, NULL);
