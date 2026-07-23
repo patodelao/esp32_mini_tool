@@ -35,6 +35,25 @@ void ble_notify_register(void);
 /* true si el teléfono está suscrito y llegaron mensajes. */
 bool ble_notify_linked(void);
 
+/* --- Del reloj al teléfono -------------------------------------------------
+ *
+ * El mismo canal sirve en los dos sentidos: acá el reloj le pide cosas al
+ * teléfono. Todas devuelven false si no hay teléfono conectado.
+ */
+
+/* Control del reproductor: "play", "pause", "next", "previous",
+ * "volumeup", "volumedown". Actúa sobre la app de música que esté sonando. */
+bool ble_notify_music_cmd(const char *cmd);
+
+/* Hace sonar el teléfono aunque esté en silencio (y lo calla con false). */
+bool ble_notify_find_phone(bool on);
+
+/* --- Del teléfono al reloj ------------------------------------------------- */
+
+/* Qué está sonando. Devuelve false si el teléfono no mandó nada todavía. */
+bool ble_notify_music_get(char *track, int track_size,
+                          char *artist, int artist_size, bool *playing);
+
 #ifdef __cplusplus
 }
 #endif

@@ -43,6 +43,17 @@ uint32_t weather_service_generation(void);
 /* true si hay una descarga en curso. */
 bool weather_service_is_fetching(void);
 
+
+/* Clima recibido por otra vía (hoy: el teléfono, vía Gadgetbridge por BLE).
+ *
+ * Mientras llegue clima externo fresco NO se descarga nada de internet: el
+ * teléfono ya sabe dónde está y tiene el dato, así que el reloj deja de
+ * depender de servicios web que pueden fallar o bloquearlo por exceso de
+ * consultas. Si el teléfono se desconecta, tras EXTERNAL_VALID_S se vuelve
+ * solo a la descarga propia.
+ */
+void weather_service_set_external(float temp_c, const char *desc, const char *city);
+
 #ifdef __cplusplus
 }
 #endif

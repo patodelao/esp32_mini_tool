@@ -44,6 +44,12 @@ static time_t            s_last_update = 0;   /* última descarga BUENA */
 static time_t            s_last_try = 0;      /* último intento, salga o no */
 static int               s_retry_s = 0;       /* espera actual tras fallar */
 
+/* Cuánto se considera fresco el clima que manda el teléfono. Gadgetbridge lo
+ * reenvía cada vez que su app de clima se actualiza; si el teléfono se aleja o
+ * se desconecta, pasado este rato el reloj vuelve a descargarlo por su cuenta. */
+#define EXTERNAL_VALID_S 5400   /* 1.5 h */
+static time_t s_external_at = 0;
+
 typedef struct { const char *emoji; const char *text; } weather_info_t;
 
 static weather_info_t get_weather_info(int code) {
@@ -207,9 +213,68 @@ void weather_service_init(void) {
     snprintf(s_cache.temp, sizeof(s_cache.temp), "--.- \xC2\xB0""C");
 }
 
+/* Traduce el texto del teléfono a uno de nuestros emojis. Gadgetbridge manda
+ * descripciones libres ("clear sky", "light rain"), así que se buscan palabras
+ * clave en vez de un código numérico. */
+static weather_info_t info_from_text(const char *txt)
+{
+    if (!txt || !txt[0]) return (weather_info_t){"☁️", "..."};
+
+    char low[48];
+    int i = 0;
+    for (; txt[i] && i < (int)sizeof(low) - 1; i++) {
+        low[i] = (txt[i] >= 'A' && txt[i] <= 'Z') ? (char)(txt[i] + 32) : txt[i];
+    }
+    low[i] = '\0';
+
+    if (strstr(low, "storm") || strstr(low, "thunder") || strstr(low, "torment"))
+        return (weather_info_t){"⛈️", "Tormenta"};
+    if (strstr(low, "snow") || strstr(low, "nieve"))
+        return (weather_info_t){"❄️", "Nieve"};
+    if (strstr(low, "rain") || strstr(low, "lluvia") || strstr(low, "shower"))
+        return (weather_info_t){"🌧️", "Lluvia"};
+    if (strstr(low, "drizzle") || strstr(low, "llovizna"))
+        return (weather_info_t){"🌧️", "Llovizna"};
+    if (strstr(low, "fog") || strstr(low, "mist") || strstr(low, "niebla"))
+        return (weather_info_t){"🌫️", "Niebla"};
+    if (strstr(low, "clear") || strstr(low, "despejado") || strstr(low, "sun"))
+        return (weather_info_t){"☀️", "Despejado"};
+    if (strstr(low, "few") || strstr(low, "scattered") || strstr(low, "parcial"))
+        return (weather_info_t){"⛅", "Parcial"};
+    return (weather_info_t){"☁️", "Nublado"};
+}
+
+void weather_service_set_external(float temp_c, const char *desc, const char *city)
+{
+    if (!s_mutex) weather_service_init();
+
+    char temp[16];
+    snprintf(temp, sizeof(temp), "%.1f \xC2\xB0""C", (double)temp_c);
+
+    weather_info_t wi = info_from_text(desc);
+    publish((city && city[0]) ? city : s_cache.city, temp, wi.emoji, wi.text);
+
+    time(&s_external_at);
+    time(&s_last_update);   /* cuenta como dato bueno: no hay que descargar */
+    s_retry_s = 0;
+}
+
+/* true si el clima del teléfono sigue vigente. */
+static bool external_fresh(void)
+{
+    if (s_external_at == 0) return false;
+    time_t now; time(&now);
+    return (now - s_external_at) < EXTERNAL_VALID_S;
+}
+
 void weather_service_refresh(bool force) {
     if (!s_mutex) weather_service_init();
     if (s_fetching) return;
+
+    /* Con clima del teléfono fresco no se descarga nada: es más confiable y
+     * ahorra la dependencia de internet. */
+    if (!force && external_fresh()) return;
+
     if (!wifi_manager_is_connected()) return;
 
     /* El límite se aplica sobre el último INTENTO, no sobre la última descarga

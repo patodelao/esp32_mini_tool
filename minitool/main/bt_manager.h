@@ -10,6 +10,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,6 +32,10 @@ void bt_manager_start(void);
 void bt_manager_stop(void);
 
 bt_state_t bt_manager_state(void);
+
+/* Handle de la conexion BLE activa, o 0xFFFF si no hay. Lo usa ble_notify
+ * para enviarle mensajes al telefono (musica, buscar telefono). */
+uint16_t bt_manager_conn_handle(void);
 
 /* Nombre del dispositivo (NVS, clave "bt_name"). */
 void bt_manager_get_name(char *buf, size_t len);

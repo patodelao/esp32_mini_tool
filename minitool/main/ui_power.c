@@ -31,12 +31,17 @@ static const char *TAG = "ui_power";
 
 #define TICK_MS  100   /* ritmo del IMU con la pantalla apagada */
 
-/* Umbrales por sensibilidad: rotación (grados/s) y cambio de aceleración (g).
- * Alcanza con superar uno de los dos. */
+/* Umbrales por sensibilidad: rotación (grados/s POR ENCIMA del reposo) y
+ * cambio de aceleración (g) entre muestras. Alcanza con superar uno.
+ *
+ * Los valores son bajos porque se comparan contra una línea base, no contra
+ * cero: el giroscopio en reposo no marca 0 sino su propio sesgo (unos pocos
+ * grados/s, distinto en cada chip). Restando ese piso se puede exigir mucho
+ * menos movimiento sin que el ruido despierte la pantalla sola. */
 static const struct { float gyro_dps; float accel_g; const char *name; } SENS[] = {
-    { 45.0f, 0.20f, "Baja"  },
-    { 15.0f, 0.07f, "Media" },
-    {  6.0f, 0.03f, "Alta"  },
+    { 18.0f, 0.10f, "Baja"  },   /* hay que levantarlo                 */
+    {  6.0f, 0.035f, "Media" },  /* moverlo sobre la mesa              */
+    {  2.5f, 0.015f, "Alta"  },  /* un empujoncito al escritorio       */
 };
 
 /* Brillo con el que se enciende durante el modo noche: lo justo para leer la
@@ -56,7 +61,9 @@ static lv_timer_t *s_timer = NULL;
 static bool s_asleep = false;
 static int  s_brightness = 100;
 static bool s_motion_wake = true;
-static int  s_sens = UI_POWER_SENS_MEDIA;
+/* Alta por defecto: el reloj vive en el escritorio y sin batería, así que
+ * interesa que responda al menor movimiento, no ahorrar energía. */
+static int  s_sens = UI_POWER_SENS_ALTA;
 static int  s_sleep_s = 45;      /* 0 = no apagar nunca */
 static bool s_inhibit = false;   /* algo pide que no se duerma (ver linterna) */
 static bool s_night = false;     /* modo noche habilitado */
@@ -66,6 +73,11 @@ static int  s_night_end = 7;
 /* Última lectura del acelerómetro, para medir el cambio entre muestras. */
 static float s_pax = 0, s_pay = 0, s_paz = 0;
 static bool  s_have_prev = false;
+
+/* Línea base de rotación: el reposo del giroscopio no es 0 sino su sesgo. Se
+ * sigue lentamente para poder exigir umbrales chicos sin falsos despertares. */
+static float s_gyro_base = 0.0f;
+static bool  s_have_base = false;
 
 /* --------------------------------- NVS ---------------------------------- */
 
@@ -133,6 +145,7 @@ static void screen_sleep(void)
     if (s_asleep) return;
     s_asleep = true;
     s_have_prev = false;        /* la referencia de movimiento arranca limpia */
+    s_have_base = false;
     bsp_backlight_set(0);
     ESP_LOGI(TAG, "Pantalla apagada");
 }
@@ -164,12 +177,23 @@ static bool motion_detected(void)
 {
     if (!qmi8658_available()) return false;
 
-    /* El giroscopio es lo más sensible a que alguien lo agarre: cualquier
-     * rotación, por mínima que sea, se ve acá antes que en la gravedad. */
+    /* El giroscopio es lo más sensible a que alguien toque el equipo: una
+     * rotación mínima se ve acá antes que en la gravedad. Se compara contra la
+     * línea base (el sesgo del chip en reposo), no contra cero. */
     float gx, gy, gz;
     if (qmi8658_read_gyro(&gx, &gy, &gz) == ESP_OK) {
         float rot = fabsf(gx) + fabsf(gy) + fabsf(gz);
-        if (rot > SENS[s_sens].gyro_dps) return true;
+
+        if (!s_have_base) {                 /* primera muestra tras dormirse */
+            s_gyro_base = rot;
+            s_have_base = true;
+        } else if (rot - s_gyro_base > SENS[s_sens].gyro_dps) {
+            return true;
+        } else {
+            /* Seguimiento lento: solo se adapta cuando está quieto, así una
+             * vibración sostenida no termina "normalizándose". */
+            s_gyro_base += 0.05f * (rot - s_gyro_base);
+        }
     }
 
     float ax, ay, az;
@@ -240,6 +264,7 @@ void ui_power_set_motion_wake(bool on)
 {
     s_motion_wake = on;
     s_have_prev = false;
+    s_have_base = false;
     settings_save();
 }
 
@@ -250,6 +275,7 @@ void ui_power_set_sensitivity(ui_power_sens_t s)
     if (s < 0 || s >= UI_POWER_SENS_COUNT) return;
     s_sens = (int)s;
     s_have_prev = false;
+    s_have_base = false;
     settings_save();
 }
 

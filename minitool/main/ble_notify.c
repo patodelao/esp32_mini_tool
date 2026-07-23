@@ -13,6 +13,8 @@
  */
 #include "ble_notify.h"
 #include "ui_notify.h"
+#include "bt_manager.h"
+#include "weather_service.h"
 
 #include "sdkconfig.h"
 #include "esp_log.h"
@@ -52,6 +54,13 @@ static uint16_t s_tx_handle = 0;
 static char     s_line[LINE_MAX];
 static int      s_line_len = 0;
 static bool     s_linked = false;
+
+/* Lo que está sonando en el teléfono (lo manda Gadgetbridge sin que se lo
+ * pidan, al cambiar de tema o de estado). */
+static char s_track[48] = "";
+static char s_artist[48] = "";
+static bool s_playing = false;
+static bool s_music_valid = false;
 
 /* ------------------------------ Interpretación --------------------------- */
 
@@ -104,6 +113,46 @@ static void handle_call(const cJSON *root)
     ui_notify_push("Llamada", NOTIFY_ALERT, who);
 }
 
+/* Qué suena: Gadgetbridge manda "musicinfo" al cambiar de tema y
+ * "musicstate" al pausar o reanudar. */
+static void handle_music_info(const cJSON *root)
+{
+    const cJSON *jt = cJSON_GetObjectItem(root, "track");
+    const cJSON *ja = cJSON_GetObjectItem(root, "artist");
+    if (cJSON_IsString(jt)) strlcpy(s_track,  jt->valuestring, sizeof(s_track));
+    if (cJSON_IsString(ja)) strlcpy(s_artist, ja->valuestring, sizeof(s_artist));
+    s_music_valid = true;
+}
+
+static void handle_music_state(const cJSON *root)
+{
+    const cJSON *js = cJSON_GetObjectItem(root, "state");
+    if (cJSON_IsString(js)) s_playing = (strcmp(js->valuestring, "play") == 0);
+    s_music_valid = true;
+}
+
+/* Clima del teléfono. Vale más que el propio: el teléfono ya sabe dónde está y
+ * tiene datos, así que el reloj deja de depender de servicios de internet que
+ * pueden fallar o bloquearlo por límite de consultas.
+ *
+ * La temperatura viene en Kelvin en algunas versiones de Gadgetbridge y en °C
+ * en otras; se distingue por el rango (nadie vive a 200 °C). */
+static void handle_weather(const cJSON *root)
+{
+    const cJSON *jtemp = cJSON_GetObjectItem(root, "temp");
+    const cJSON *jtxt  = cJSON_GetObjectItem(root, "txt");
+    const cJSON *jloc  = cJSON_GetObjectItem(root, "loc");
+    if (!cJSON_IsNumber(jtemp)) return;
+
+    float temp = (float)jtemp->valuedouble;
+    if (temp > 200.0f) temp -= 273.15f;
+
+    weather_service_set_external(temp,
+                                 cJSON_IsString(jtxt) ? jtxt->valuestring : "",
+                                 cJSON_IsString(jloc) ? jloc->valuestring : "");
+    ESP_LOGI(TAG, "Clima del teléfono: %.1f C", (double)temp);
+}
+
 static void handle_json(const char *json)
 {
     cJSON *root = cJSON_Parse(json);
@@ -112,10 +161,12 @@ static void handle_json(const char *json)
     const cJSON *jt = cJSON_GetObjectItem(root, "t");
     if (cJSON_IsString(jt)) {
         const char *t = jt->valuestring;
-        if      (strcmp(t, "notify")  == 0) handle_notify(root);
-        else if (strcmp(t, "call")    == 0) handle_call(root);
-        else if (strcmp(t, "setTime") == 0) handle_set_time(root);
-        /* El resto (música, estado, find...) se ignora por ahora. */
+        if      (strcmp(t, "notify")     == 0) handle_notify(root);
+        else if (strcmp(t, "call")       == 0) handle_call(root);
+        else if (strcmp(t, "setTime")    == 0) handle_set_time(root);
+        else if (strcmp(t, "musicinfo")  == 0) handle_music_info(root);
+        else if (strcmp(t, "musicstate") == 0) handle_music_state(root);
+        else if (strcmp(t, "weather")    == 0) handle_weather(root);
         s_linked = true;
     }
     cJSON_Delete(root);
@@ -206,9 +257,65 @@ void ble_notify_register(void)
 
 bool ble_notify_linked(void) { return s_linked; }
 
+/* ------------------------- Del reloj al teléfono ------------------------- */
+
+/* Manda una línea JSON por la característica TX. Gadgetbridge está suscrito a
+ * ella, así que le llega como notificación BLE. */
+static bool send_json(const char *json)
+{
+    uint16_t conn = bt_manager_conn_handle();
+    if (conn == 0xFFFF || s_tx_handle == 0) return false;
+
+    char line[128];
+    int n = snprintf(line, sizeof(line), "%s\n", json);
+    if (n <= 0 || n >= (int)sizeof(line)) return false;
+
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(line, (uint16_t)n);
+    if (!om) return false;
+
+    int rc = ble_gattc_notify_custom(conn, s_tx_handle, om);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "No se pudo enviar (rc=%d)", rc);
+        return false;
+    }
+    ESP_LOGI(TAG, "-> %s", json);
+    return true;
+}
+
+bool ble_notify_music_cmd(const char *cmd)
+{
+    if (!cmd) return false;
+    char json[64];
+    snprintf(json, sizeof(json), "{\"t\":\"music\",\"n\":\"%s\"}", cmd);
+    return send_json(json);
+}
+
+bool ble_notify_find_phone(bool on)
+{
+    char json[48];
+    snprintf(json, sizeof(json), "{\"t\":\"findPhone\",\"n\":%s}", on ? "true" : "false");
+    return send_json(json);
+}
+
+bool ble_notify_music_get(char *track, int track_size,
+                          char *artist, int artist_size, bool *playing)
+{
+    if (!s_music_valid) return false;
+    if (track)   strlcpy(track,  s_track,  track_size);
+    if (artist)  strlcpy(artist, s_artist, artist_size);
+    if (playing) *playing = s_playing;
+    return true;
+}
+
 #else  /* sin NimBLE compilado */
 
 void ble_notify_register(void) {}
 bool ble_notify_linked(void) { return false; }
+bool ble_notify_music_cmd(const char *cmd) { (void)cmd; return false; }
+bool ble_notify_find_phone(bool on) { (void)on; return false; }
+bool ble_notify_music_get(char *t, int ts, char *a, int as, bool *p)
+{
+    (void)t; (void)ts; (void)a; (void)as; (void)p; return false;
+}
 
 #endif

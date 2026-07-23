@@ -62,6 +62,7 @@ static bool s_stack_started = false; /* nimble_port corriendo */
 static bool s_synced = false;        /* host sincronizado con el controlador */
 static bool s_want_adv = false;      /* intención del usuario */
 static bool s_peer_connected = false;
+static uint16_t s_conn_handle = 0;   /* para poder NOTIFICARLE al telefono */
 static uint8_t s_own_addr_type = 0;
 
 static void start_advertising(void);
@@ -71,11 +72,13 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
         s_peer_connected = (event->connect.status == 0);
+        if (s_peer_connected) s_conn_handle = event->connect.conn_handle;
         ESP_LOGI(TAG, "Conexión BLE: %s", s_peer_connected ? "OK" : "falló");
         if (!s_peer_connected && s_want_adv) start_advertising();
         break;
     case BLE_GAP_EVENT_DISCONNECT:
         s_peer_connected = false;
+        s_conn_handle = 0;
         ESP_LOGI(TAG, "BLE desconectado");
         if (s_want_adv) start_advertising();
         break;
@@ -166,6 +169,8 @@ void bt_manager_stop(void)
     }
 }
 
+uint16_t bt_manager_conn_handle(void) { return s_peer_connected ? s_conn_handle : 0xFFFF; }
+
 bt_state_t bt_manager_state(void)
 {
     if (s_peer_connected) return BT_STATE_CONNECTED;
@@ -195,6 +200,7 @@ void bt_manager_set_name(const char *name)
 void bt_manager_start(void) { ESP_LOGW(TAG, "Firmware sin soporte BT"); }
 void bt_manager_stop(void) {}
 bt_state_t bt_manager_state(void) { return BT_STATE_UNSUPPORTED; }
+uint16_t bt_manager_conn_handle(void) { return 0xFFFF; }
 
 void bt_manager_set_name(const char *name)
 {
