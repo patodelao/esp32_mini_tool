@@ -89,22 +89,27 @@ static void defaults_for(const char *id, sensor_rule_t *r)
         r->lo_on = true;  r->lo = 5.0f;
         r->hi_on = true;  r->hi = 35.0f;
         r->hyst  = 1.0f;
+        r->sample_s = 10;
     } else if (strcmp(leaf, "hum") == 0) {
         r->lo_on = true;  r->lo = 25.0f;
         r->hi_on = true;  r->hi = 80.0f;
         r->hyst  = 3.0f;
+        r->sample_s = 10;
     } else if (strcmp(leaf, "rssi") == 0) {
         /* Bajo -85 dBm el enlace se vuelve inestable: sirve para elegir dónde
          * dejar el nodo instalado. */
         r->lo_on = true;  r->lo = -85.0f;
         r->hyst  = 5.0f;
+        r->sample_s = 60;              /* telemetría: 1 por minuto */
     } else if (strcmp(leaf, "heap") == 0) {
         /* RAM libre del nodo: si baja sostenidamente hay una fuga. */
         r->lo_on = true;  r->lo = 8.0f;
         r->hyst  = 2.0f;
+        r->sample_s = 60;
     } else if (strcmp(leaf, "uptime") == 0) {
         /* Sube siempre y se reinicia al reiniciar el nodo: sin umbrales. */
         r->lo_on = r->hi_on = false;
+        r->sample_s = 60;
     } else if (strcmp(leaf, "abierta_seg") == 0) {
         r->hi_on = true;  r->hi = 60.0f;
         r->hyst  = 5.0f;
@@ -279,14 +284,7 @@ void sensor_alert_on_value(const char *id, float v)
 
     e->last_v = v;
     e->has_v  = true;
-
-    /* Volvió a publicar tras un silencio. */
-    if (e->stale) {
-        e->stale = false;
-        char name[40];
-        sensor_friendly_name(e->id, name, sizeof(name));
-        ui_notify_push(name, NOTIFY_INFO, "volvio a publicar");
-    }
+    e->stale  = false;   /* el aviso de "volvió" lo da el tick, por nodo */
 
     uint64_t now = esp_timer_get_time();
     sensor_alert_state_t want = evaluate(e, v);
@@ -325,9 +323,41 @@ uint32_t sensor_alert_stale_limit(const char *id)
     return lim > STALE_MIN_S ? lim : STALE_MIN_S;
 }
 
+/* Un nodo agrupa varios sensores (pieza trae temp, hum, suelo, rssi, uptime y
+ * heap). Cuando el nodo se cae o vuelve, TODOS se quedan mudos o vuelven a la
+ * vez: avisar por sensor eran 6 toasts por el mismo evento. El estado mudo se
+ * sigue por sensor (la tool colorea cada uno), pero la notificación se emite
+ * una sola vez por nodo. */
+typedef struct {
+    char node[24];
+    bool used;
+    bool mudo;      /* último estado notificado, para detectar el cambio */
+    int  vistos;    /* sensores vigilados del nodo, contados en este tick */
+    int  mudos;
+} node_state_t;
+
+static node_state_t s_nodes[MAX_RULES];
+
+static node_state_t *node_find_or_add(const char *node)
+{
+    int slot = -1;
+    for (int i = 0; i < MAX_RULES; i++) {
+        if (s_nodes[i].used) {
+            if (strcmp(s_nodes[i].node, node) == 0) return &s_nodes[i];
+        } else if (slot < 0) slot = i;
+    }
+    if (slot < 0) return NULL;
+    memset(&s_nodes[slot], 0, sizeof(s_nodes[slot]));
+    strlcpy(s_nodes[slot].node, node, sizeof(s_nodes[slot].node));
+    s_nodes[slot].used = true;
+    return &s_nodes[slot];
+}
+
 static void tick_cb(void *arg)
 {
     (void)arg;
+
+    /* 1) Refrescar el estado mudo de cada sensor (lo usa la UI). */
     int n = sensor_count();
     for (int i = 0; i < n; i++) {
         char     id[SENSOR_ID_MAX];
@@ -335,15 +365,45 @@ static void tick_cb(void *arg)
         if (!sensor_get(i, id, sizeof(id), NULL, 0, &age)) continue;
 
         entry_t *e = find_or_add(id);
-        if (!e || !e->has_v || !e->rule.stale_on || e->stale) continue;
-        if (age <= sensor_alert_stale_limit(id)) continue;
+        if (!e || !e->has_v || !e->rule.stale_on) continue;
+        e->stale = (age > sensor_alert_stale_limit(id));
+    }
 
-        e->stale = true;
-        char name[40], msg[48];
-        sensor_friendly_name(id, name, sizeof(name));
-        snprintf(msg, sizeof(msg), "sin datos hace %u min", (unsigned)(age / 60));
-        ui_notify_push(name, NOTIFY_WARNING, msg);
-        ESP_LOGW(TAG, "%s sin datos hace %u s", id, (unsigned)age);
+    /* 2) Contar, por nodo, cuántos de sus sensores vigilados están mudos. */
+    for (int k = 0; k < MAX_RULES; k++) s_nodes[k].vistos = s_nodes[k].mudos = 0;
+
+    for (int i = 0; i < n; i++) {
+        char id[SENSOR_ID_MAX], node[24];
+        if (!sensor_get(i, id, sizeof(id), NULL, 0, NULL)) continue;
+
+        entry_t *e = find_or_add(id);
+        if (!e || !e->has_v || !e->rule.stale_on) continue;
+
+        sensor_node_id(id, node, sizeof(node));
+        node_state_t *ns = node_find_or_add(node);
+        if (!ns) continue;
+        ns->vistos++;
+        if (e->stale) ns->mudos++;
+    }
+
+    /* 3) El nodo está mudo cuando lo están TODOS sus sensores: si alguno sigue
+     * publicando, el nodo está vivo y el silencio es de un sensor puntual (que
+     * la tool ya muestra atenuado). Se notifica solo el cambio de estado. */
+    for (int k = 0; k < MAX_RULES; k++) {
+        if (!s_nodes[k].used || s_nodes[k].vistos == 0) continue;
+
+        bool mudo = (s_nodes[k].mudos == s_nodes[k].vistos);
+        if (mudo == s_nodes[k].mudo) continue;
+        s_nodes[k].mudo = mudo;
+
+        const char *label = sensor_node_label(s_nodes[k].node);
+        if (mudo) {
+            ui_notify_push(label, NOTIFY_WARNING, "sin datos");
+            ESP_LOGW(TAG, "Nodo %s sin datos", s_nodes[k].node);
+        } else {
+            ui_notify_push(label, NOTIFY_INFO, "volvio a publicar");
+            ESP_LOGI(TAG, "Nodo %s volvio", s_nodes[k].node);
+        }
     }
 }
 

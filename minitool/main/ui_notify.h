@@ -18,6 +18,8 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +40,30 @@ void ui_notify_init(void);
  * con o sin el lock de LVGL tomado. 'source' es el nombre del equipo/origen
  * (p.ej. "Refri"); 'msg' el texto a mostrar. Ambos se copian. */
 void ui_notify_push(const char *source, notify_level_t level, const char *msg);
+
+/* --- Historial -------------------------------------------------------------
+ *
+ * Un toast dura unos segundos: si no estabas mirando la pantalla, se perdió.
+ * Toda notificación queda además registrada acá, para poder revisarla después
+ * (lo muestra la tool Alertas). Solo en RAM: se vacía al reiniciar.
+ */
+#define NOTIFY_HIST 20
+
+typedef struct {
+    char           source[16];
+    char           msg[80];
+    notify_level_t level;
+    time_t         ts;      /* 0 si el reloj aún no estaba en hora */
+} notify_record_t;
+
+/* Cuántas notificaciones hay guardadas (máximo NOTIFY_HIST). */
+int ui_notify_history_count(void);
+
+/* Copia la notificación i, siendo 0 la más reciente. false si i está fuera. */
+bool ui_notify_history_get(int i, notify_record_t *out);
+
+/* Vacía el historial. */
+void ui_notify_history_clear(void);
 
 #ifdef __cplusplus
 }

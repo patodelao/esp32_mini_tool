@@ -30,6 +30,10 @@ código del minitool:
 | `labo/config/<nodo>/...` | minitool → nodo | configuración **retenida** (umbrales, intervalos) |
 | `labo/alerta/<origen>` | cualquiera → minitool | bus de alertas: JSON `{origen,nivel,msg}` → notificación flotante |
 
+Toda notificación —del bus, de los umbrales locales o de la tool Control— queda
+además registrada en la tool **Alertas**, con su hora. Un toast dura unos
+segundos: si no estabas mirando la pantalla, ahí es donde lo encontrás.
+
 El payload de un sensor es simplemente el número como texto (`"23.5"`). La
 magnitud (`temp`, `hum`, `suelo`, `rssi`…) define la unidad y los umbrales por
 defecto; ver `minitool/main/sensor_service.c` y `sensor_alert.c`.

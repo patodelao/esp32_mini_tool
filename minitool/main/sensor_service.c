@@ -33,6 +33,7 @@ static const char *TAG = "sensor_svc";
 
 #define REC_NS   "sensrec"   /* namespace NVS del récord */
 #define REC_KEY  "recs"      /* blob con el arreglo de récords */
+#define HOUR_KEY "hours"     /* blob con el histórico horario */
 
 typedef struct {
     char     id[ID_MAX];
@@ -46,6 +47,12 @@ typedef struct {
     float    rec_min, rec_max;
     int32_t  rec_day;            /* id de día (año*366+yday); -1 = sin fijar */
     bool     rec_valid;          /* hay récord acumulado */
+    /* Histórico largo: un promedio por hora */
+    float    h_hist[SENSOR_HIST_H];
+    int      h_head, h_count;
+    int32_t  h_hour;             /* id de hora en curso; -1 = sin fijar */
+    float    h_sum;              /* acumulador de la hora en curso */
+    int      h_n;
 } sensor_t;
 
 static sensor_t s_sensors[MAX_SENSORS];
@@ -61,6 +68,18 @@ typedef struct {
 
 static rec_blob_t s_saved[MAX_SENSORS];
 static int        s_saved_n = 0;
+
+/* Copia persistida del histórico horario, con la misma lógica: se carga una
+ * vez y cada sensor recupera lo suyo cuando reaparece por MQTT. */
+typedef struct {
+    char    id[ID_MAX];
+    float   h[SENSOR_HIST_H];
+    int16_t head, count;
+    int32_t hour;
+} hour_blob_t;
+
+static hour_blob_t s_hsaved[MAX_SENSORS];
+static int         s_hsaved_n = 0;
 
 /* --------------------------- Nombres y unidades ------------------------- */
 
@@ -83,6 +102,15 @@ const char *sensor_unit(const char *id)
     return "";
 }
 
+void sensor_node_id(const char *id, char *out, int out_size)
+{
+    const char *slash = strrchr(id, '/');
+    int n = slash ? (int)(slash - id) : (int)strlen(id);
+    if (n >= out_size) n = out_size - 1;
+    memcpy(out, id, n);
+    out[n] = '\0';
+}
+
 /* Nombre legible del nodo (parte del id antes de '/'). Editá la tabla al
  * agregar nodos; si no está, se muestra el id crudo. */
 static const char *node_name(const char *node)
@@ -95,6 +123,8 @@ static const char *node_name(const char *node)
         if (strcmp(M[i].id, node) == 0) return M[i].name;
     return node;
 }
+
+const char *sensor_node_label(const char *node) { return node_name(node); }
 
 /* Nombre legible de la magnitud (parte tras '/'). */
 static const char *mag_name(const char *leaf)
@@ -135,6 +165,17 @@ static int32_t current_day(void)
     return (int32_t)(tm.tm_year * 366 + tm.tm_yday);
 }
 
+/* Id de hora local, creciente y comparable. -1 si el reloj no está en hora:
+ * sin hora válida no tiene sentido acumular por hora. */
+static int32_t current_hour(void)
+{
+    time_t now = time(NULL);
+    if (now < 1600000000) return -1;
+    struct tm tm;
+    localtime_r(&now, &tm);
+    return (int32_t)((tm.tm_year * 366 + tm.tm_yday) * 24 + tm.tm_hour);
+}
+
 /* ------------------------------- NVS ----------------------------------- */
 
 static void records_load(void)
@@ -167,6 +208,82 @@ static void records_save(void)
     nvs_set_blob(h, REC_KEY, buf, (size_t)n * sizeof(rec_blob_t));
     nvs_commit(h);
     nvs_close(h);
+}
+
+/* --------------------------- Histórico horario -------------------------- */
+
+static void hours_load(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(REC_NS, NVS_READONLY, &h) != ESP_OK) return;
+    size_t sz = sizeof(s_hsaved);
+    if (nvs_get_blob(h, HOUR_KEY, s_hsaved, &sz) == ESP_OK) {
+        s_hsaved_n = (int)(sz / sizeof(hour_blob_t));
+    }
+    nvs_close(h);
+}
+
+/* Se llama solo al cerrar una hora (una vez por hora), no en cada lectura. */
+static void hours_save(void)
+{
+    static hour_blob_t buf[MAX_SENSORS];   /* static: son ~2 kB, no van al stack */
+    int n = 0;
+    for (int i = 0; i < MAX_SENSORS; i++) {
+        if (!s_sensors[i].used || s_sensors[i].h_count == 0) continue;
+        memset(&buf[n], 0, sizeof(buf[n]));
+        strlcpy(buf[n].id, s_sensors[i].id, sizeof(buf[n].id));
+        memcpy(buf[n].h, s_sensors[i].h_hist, sizeof(buf[n].h));
+        buf[n].head  = (int16_t)s_sensors[i].h_head;
+        buf[n].count = (int16_t)s_sensors[i].h_count;
+        buf[n].hour  = s_sensors[i].h_hour;
+        n++;
+    }
+    nvs_handle_t h;
+    if (nvs_open(REC_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_blob(h, HOUR_KEY, buf, (size_t)n * sizeof(hour_blob_t));
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+static void hours_restore(sensor_t *s)
+{
+    for (int i = 0; i < s_hsaved_n; i++) {
+        if (strcmp(s_hsaved[i].id, s->id) != 0) continue;
+        memcpy(s->h_hist, s_hsaved[i].h, sizeof(s->h_hist));
+        s->h_head  = s_hsaved[i].head;
+        s->h_count = s_hsaved[i].count;
+        s->h_hour  = s_hsaved[i].hour;
+        return;
+    }
+}
+
+/* Acumula la lectura en la hora en curso; al cambiar de hora vuelca el
+ * promedio al ring y lo persiste. */
+static void hour_update(sensor_t *s, float f)
+{
+    int32_t hr = current_hour();
+    if (hr < 0) return;                 /* sin reloj no hay eje temporal */
+
+    if (s->h_hour < 0) {                /* primera lectura con hora válida */
+        s->h_hour = hr;
+        s->h_sum  = f;
+        s->h_n    = 1;
+        return;
+    }
+
+    if (hr != s->h_hour) {
+        if (s->h_n > 0) {
+            s->h_hist[s->h_head] = s->h_sum / (float)s->h_n;
+            s->h_head = (s->h_head + 1) % SENSOR_HIST_H;
+            if (s->h_count < SENSOR_HIST_H) s->h_count++;
+            hours_save();
+        }
+        s->h_hour = hr;
+        s->h_sum  = 0;
+        s->h_n    = 0;
+    }
+    s->h_sum += f;
+    s->h_n++;
 }
 
 /* Restaura el récord guardado que coincida con el id del sensor. */
@@ -225,7 +342,9 @@ static sensor_t *find_or_add(const char *id)
     strlcpy(s_sensors[slot].id, id, sizeof(s_sensors[slot].id));
     s_sensors[slot].used = true;
     s_sensors[slot].rec_day = -1;
+    s_sensors[slot].h_hour  = -1;
     record_restore(&s_sensors[slot]);   /* recupera récord de NVS si existe */
+    hours_restore(&s_sensors[slot]);    /* y el histórico horario */
     return &s_sensors[slot];
 }
 
@@ -260,6 +379,7 @@ static void sensor_cb(const char *topic, int topic_len, const char *data, int da
     if (s->count < SENSOR_HIST) s->count++;
     s->last_us = esp_timer_get_time();
     record_update(s, f);
+    hour_update(s, f);
     sensor_alert_on_value(id, f);   /* umbrales / histéresis / notificaciones */
     ESP_LOGI(TAG, "Sensor %s = %s", id, valbuf);
 }
@@ -270,6 +390,7 @@ void sensor_service_init(void)
     if (started) return;
     started = true;
     records_load();
+    hours_load();
     sensor_alert_init();   /* motor de umbrales (se alimenta desde sensor_cb) */
     mqtt_hub_init();
     mqtt_hub_subscribe(SENSOR_FILTER, sensor_cb, NULL);
@@ -313,6 +434,18 @@ int sensor_history(int idx, float *out, int max)
     int start = (s->head - s->count + SENSOR_HIST) % SENSOR_HIST;
     for (int i = 0; i < n; i++) {
         out[i] = s->hist[(start + i) % SENSOR_HIST];
+    }
+    return n;
+}
+
+int sensor_history_hourly(int idx, float *out, int max)
+{
+    sensor_t *s = nth(idx);
+    if (!s || !out) return 0;
+    int n = s->h_count < max ? s->h_count : max;
+    int start = (s->h_head - s->h_count + SENSOR_HIST_H) % SENSOR_HIST_H;
+    for (int i = 0; i < n; i++) {
+        out[i] = s->h_hist[(start + i) % SENSOR_HIST_H];
     }
     return n;
 }

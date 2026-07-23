@@ -15,9 +15,11 @@
 #include "lvgl.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 
 #include <string.h>
+#include <time.h>
 
 static const char *TAG = "notify";
 
@@ -41,6 +43,12 @@ static lv_timer_t   *s_drain_timer = NULL;
 /* Estado del toast actualmente visible (solo lo toca el hilo de LVGL) */
 static lv_obj_t   *s_toast = NULL;
 static lv_timer_t *s_hide_timer = NULL;
+
+/* Historial (ring buffer). Ver la sección "Historial" más abajo. */
+static notify_record_t   s_hist[NOTIFY_HIST];
+static int               s_hist_n = 0;     /* válidos, tope NOTIFY_HIST */
+static int               s_hist_head = 0;  /* dónde va el próximo */
+static SemaphoreHandle_t s_hist_lock = NULL;
 
 /* --- Estilo por nivel ------------------------------------------------------ */
 
@@ -208,6 +216,7 @@ static void drain_timer_cb(lv_timer_t *t)
 void ui_notify_init(void)
 {
     if (s_queue) return; /* idempotente */
+    s_hist_lock = xSemaphoreCreateMutex();
     s_queue = xQueueCreate(NOTIFY_QUEUE_LEN, sizeof(notify_item_t));
     if (!s_queue) {
         ESP_LOGE(TAG, "No se pudo crear la cola de notificaciones");
@@ -215,6 +224,54 @@ void ui_notify_init(void)
     }
     s_drain_timer = lv_timer_create(drain_timer_cb, NOTIFY_DRAIN_MS, NULL);
     ESP_LOGI(TAG, "Sistema de notificaciones listo");
+}
+
+/* --- Historial -------------------------------------------------------------
+ *
+ * Ring buffer protegido con un mutex: ui_notify_push() puede venir de la tarea
+ * MQTT o de un timer, y la tool Alertas lee desde el hilo de LVGL.
+ */
+static void history_add(const notify_item_t *it)
+{
+    if (!s_hist_lock) return;
+    if (xSemaphoreTake(s_hist_lock, pdMS_TO_TICKS(50)) != pdTRUE) return;
+
+    notify_record_t *r = &s_hist[s_hist_head];
+    strlcpy(r->source, it->source, sizeof(r->source));
+    strlcpy(r->msg,    it->msg,    sizeof(r->msg));
+    r->level = it->level;
+    time_t now = time(NULL);
+    r->ts = (now > 1600000000) ? now : 0;   /* 0 = reloj sin sincronizar */
+
+    s_hist_head = (s_hist_head + 1) % NOTIFY_HIST;
+    if (s_hist_n < NOTIFY_HIST) s_hist_n++;
+
+    xSemaphoreGive(s_hist_lock);
+}
+
+int ui_notify_history_count(void)
+{
+    return s_hist_n;
+}
+
+bool ui_notify_history_get(int i, notify_record_t *out)
+{
+    if (!out || !s_hist_lock || i < 0 || i >= s_hist_n) return false;
+    if (xSemaphoreTake(s_hist_lock, pdMS_TO_TICKS(50)) != pdTRUE) return false;
+    /* i = 0 es el más reciente: el anterior a head. */
+    int idx = (s_hist_head - 1 - i + 2 * NOTIFY_HIST) % NOTIFY_HIST;
+    *out = s_hist[idx];
+    xSemaphoreGive(s_hist_lock);
+    return true;
+}
+
+void ui_notify_history_clear(void)
+{
+    if (!s_hist_lock) return;
+    if (xSemaphoreTake(s_hist_lock, pdMS_TO_TICKS(50)) != pdTRUE) return;
+    s_hist_n = 0;
+    s_hist_head = 0;
+    xSemaphoreGive(s_hist_lock);
 }
 
 void ui_notify_push(const char *source, notify_level_t level, const char *msg)
@@ -226,6 +283,9 @@ void ui_notify_push(const char *source, notify_level_t level, const char *msg)
     notify_item_t it = { .level = level };
     if (source) strlcpy(it.source, source, sizeof(it.source));
     if (msg)    strlcpy(it.msg,    msg,    sizeof(it.msg));
+
+    /* Al historial va siempre, aunque el toast se descarte por cola llena. */
+    history_add(&it);
 
     /* No bloquear al productor: si la cola está llena, descartar la más vieja */
     if (xQueueSend(s_queue, &it, 0) != pdTRUE) {

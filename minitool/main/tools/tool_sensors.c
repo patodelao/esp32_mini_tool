@@ -37,7 +37,7 @@ static lv_obj_t *s_val_lbl = NULL;
 static lv_obj_t *s_stats_lbl = NULL;   /* récord del día */
 static lv_obj_t *s_chart = NULL;
 static lv_chart_series_t *s_ser = NULL;
-static lv_obj_t *s_foot_lbl = NULL;    /* índice + antigüedad */
+static lv_obj_t *s_foot_lbl = NULL;    /* índice + antigüedad + ventana */
 static lv_obj_t *s_empty = NULL;
 static lv_obj_t *s_reset_btn = NULL;
 static lv_obj_t *s_reset_lbl = NULL;
@@ -56,6 +56,7 @@ static char          s_ovl_id[SENSOR_ID_MAX];
 static sensor_rule_t s_edit;
 static float s_step = 1, s_rmin = -100, s_rmax = 100;
 static float s_lo_last = 0, s_hi_last = 0;   /* para volver a activar un límite */
+static bool  s_long = false;                 /* gráfico: false=reciente, true=24 h */
 
 /* "hace 5 s" / "hace 2 min" / "hace 1 h" en un buffer del llamador. */
 static void fmt_age(uint32_t age_s, char *out, int out_size)
@@ -419,9 +420,25 @@ static void refresh(void)
         }
     }
 
-    /* Histórico -> rango del gráfico. */
-    float h[SENSOR_HIST];
-    int hn = sensor_history(s_sel, h, SENSOR_HIST);
+    /* Histórico -> rango del gráfico. En modo largo se grafica un promedio por
+     * hora (hasta 24 h), que es lo que deja ver la curva de secado de la
+     * maceta; si todavía no hay horas cerradas, se cae al histórico corto. */
+    float h[SENSOR_HIST > SENSOR_HIST_H ? SENSOR_HIST : SENSOR_HIST_H];
+    int hn = 0;
+    bool showing_long = false;
+    if (s_long) {
+        hn = sensor_history_hourly(s_sel, h, SENSOR_HIST_H);
+        showing_long = (hn > 1);
+    }
+    if (!showing_long) hn = sensor_history(s_sel, h, SENSOR_HIST);
+
+    /* Texto de la ventana graficada, para el pie. */
+    char span[16] = "";
+    if (s_long) {
+        if (showing_long) snprintf(span, sizeof(span), "  |  %d h", hn);
+        else              snprintf(span, sizeof(span), "  |  sin horas");
+    }
+
     if (hn > 0 && s_chart && s_ser) {
         float mn = h[0], mx = h[0];
         for (int i = 1; i < hn; i++) { if (h[i] < mn) mn = h[i]; if (h[i] > mx) mx = h[i]; }
@@ -443,21 +460,21 @@ static void refresh(void)
     /* Pie: índice + antigüedad, o el motivo de la alerta si el valor está
      * fuera de umbral (rojo) / el sensor dejó de publicar (ámbar). */
     if (s_foot_lbl) {
-        char foot[48];
+        char foot[64];
         lv_color_t fc = lv_color_hex(0x7F8C8D);
 
         if (out_of_range) {
             sensor_rule_t r;
             sensor_alert_get_rule(id, &r);
-            snprintf(foot, sizeof(foot), "%d/%d  |  %s %.0f %s", s_sel + 1, n,
+            snprintf(foot, sizeof(foot), "%d/%d  |  %s %.0f %s%s", s_sel + 1, n,
                      st == SENSOR_ALERT_LOW ? "min" : "max",
-                     st == SENSOR_ALERT_LOW ? r.lo  : r.hi, u);
+                     st == SENSOR_ALERT_LOW ? r.lo  : r.hi, u, span);
             fc = lv_color_hex(0xE74C3C);
         } else {
             char age_txt[16];
             fmt_age(age, age_txt, sizeof(age_txt));
-            snprintf(foot, sizeof(foot), "%d/%d  |  %s%s", s_sel + 1, n,
-                     age_txt, stale ? "  (viejo)" : "");
+            snprintf(foot, sizeof(foot), "%d/%d  |  %s%s%s", s_sel + 1, n,
+                     age_txt, stale ? "  (viejo)" : "", span);
             if (stale) fc = lv_color_hex(0xE0A030);
         }
         lv_label_set_text(s_foot_lbl, foot);
@@ -466,6 +483,13 @@ static void refresh(void)
 }
 
 static void poll_cb(lv_timer_t *t) { (void)t; refresh(); }
+
+static void chart_cb(lv_event_t *e)
+{
+    (void)e;
+    s_long = !s_long;
+    refresh();
+}
 
 static void next_cb(lv_event_t *e)
 {
@@ -499,9 +523,12 @@ static void sensors_open(lv_obj_t *parent)
     lv_label_set_text(s_stats_lbl, "");
     lv_obj_align(s_stats_lbl, LV_ALIGN_TOP_MID, 0, 70);
 
+    /* Tocar el gráfico alterna entre el histórico reciente y el de 24 h. */
     s_chart = lv_chart_create(parent);
     lv_obj_set_size(s_chart, 186, 50);
     lv_obj_align(s_chart, LV_ALIGN_CENTER, 0, -4);
+    lv_obj_add_flag(s_chart, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_chart, chart_cb, LV_EVENT_CLICKED, NULL);
     lv_chart_set_type(s_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_div_line_count(s_chart, 3, 0);
     lv_chart_set_update_mode(s_chart, LV_CHART_UPDATE_MODE_SHIFT);
