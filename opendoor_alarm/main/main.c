@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_sleep.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -74,7 +75,10 @@
 #define MQTT_TOPIC_DOOR     "labo/nodo/" DEVICE_ID "/puerta"  /* ABIERTO/CERRADO */
 #define MQTT_TOPIC_STATUS   "labo/nodo/" DEVICE_ID "/status" /* online/offline   */
 #define MQTT_TOPIC_ALERT    "labo/alerta/" DEVICE_ID         /* JSON multicanal  */
-#define MQTT_TOPIC_RSSI     "labo/sensor/" DEVICE_ID "/rssi" /* dBm              */
+#define MQTT_TOPIC_RSSI     "labo/sensor/" DEVICE_ID "/rssi"   /* dBm            */
+#define MQTT_TOPIC_UPTIME   "labo/sensor/" DEVICE_ID "/uptime" /* minutos        */
+#define MQTT_TOPIC_HEAP     "labo/sensor/" DEVICE_ID "/heap"   /* kB libres      */
+#define MQTT_TOPIC_IP       "labo/nodo/"   DEVICE_ID "/ip"     /* para llegarle  */
 #define MQTT_TOPIC_OPENSECS "labo/sensor/" DEVICE_ID "/abierta_seg"
 
 static const char *TAG = "door_alarm";
@@ -261,17 +265,40 @@ static void publish_alert(const char *nivel, const char *msg)
     ESP_LOGI(TAG, "Alerta [%s] %s", nivel, msg);
 }
 
-/* Señal Wi-Fi como sensor numérico (retenido) para graficar en la tool Sensores. */
-static void publish_rssi(void)
+/* Telemetría de salud como sensores numéricos (retenidos): la tool Sensores
+ * los grafica y les aplica umbrales sola, igual que a los del nodo pieza. */
+static void publish_salud(void)
 {
     if (!mqtt_ready()) {
         return;
     }
+    char buf[24];
+
     wifi_ap_record_t ap;
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
-        char buf[16];
         snprintf(buf, sizeof(buf), "%d", ap.rssi);
         esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_RSSI, buf, 0, 1, 1 /*retain*/);
+    }
+
+    snprintf(buf, sizeof(buf), "%llu", esp_timer_get_time() / 60000000ULL);
+    esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_UPTIME, buf, 0, 1, 1 /*retain*/);
+
+    snprintf(buf, sizeof(buf), "%.1f", esp_get_free_heap_size() / 1024.0f);
+    esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_HEAP, buf, 0, 1, 1 /*retain*/);
+}
+
+/* IP con la que se llega al nodo; la muestra la tool Nodos. */
+static void publish_ip(void)
+{
+    if (!mqtt_ready()) {
+        return;
+    }
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t info;
+    if (netif && esp_netif_get_ip_info(netif, &info) == ESP_OK && info.ip.addr) {
+        char buf[24];
+        snprintf(buf, sizeof(buf), IPSTR, IP2STR(&info.ip));
+        esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_IP, buf, 0, 1, 1 /*retain*/);
     }
 }
 
@@ -286,7 +313,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         ESP_LOGI(TAG, "MQTT conectado");
         /* Anunciar presencia y señal en cuanto hay conexión */
         esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_STATUS, "online", 0, 1, 1 /*retain*/);
-        publish_rssi();
+        publish_salud();
+        publish_ip();
     } else if (event_id == MQTT_EVENT_DISCONNECTED) {
         xEventGroupClearBits(s_net_events, MQTT_CONNECTED_BIT);
         ESP_LOGW(TAG, "MQTT desconectado");
@@ -457,7 +485,7 @@ static void run_alarm_until_closed(uint32_t *open_time_ms, uint32_t *heartbeat_e
         *heartbeat_elapsed_ms += ALARM_BLINK_MS;
         if (*heartbeat_elapsed_ms >= DOOR_OPEN_HEARTBEAT_MS) {
             publish_door_open_heartbeat();
-            publish_rssi();
+            publish_salud();
             *heartbeat_elapsed_ms = 0;
         }
         *red_phase = !*red_phase;

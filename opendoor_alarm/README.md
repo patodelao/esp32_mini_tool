@@ -35,6 +35,9 @@ bus de alertas multicanal, sin cambios del lado del minitool.
 | `labo/nodo/refri/status` | `online` / `offline` | Tool **Nodos** (estado) | sí |
 | `labo/alerta/refri` | `{"origen","nivel","msg"}` | Bus de **alertas multicanal** | no |
 | `labo/sensor/refri/rssi` | dBm | Tool **Sensores** (señal Wi-Fi) | sí |
+| `labo/sensor/refri/uptime` | minutos | Tool **Sensores** (salud) | sí |
+| `labo/sensor/refri/heap` | kB libres | Tool **Sensores** (salud) | sí |
+| `labo/nodo/refri/ip` | `192.168.1.x` | Tool **Nodos** (para llegarle) | sí |
 | `labo/sensor/refri/abierta_seg` | segundos | Tool **Sensores** (duración de la apertura) | sí |
 
 > El estado de la puerta va bajo `labo/nodo/` y no bajo `labo/sensor/` porque

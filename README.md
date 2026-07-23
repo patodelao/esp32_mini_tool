@@ -33,7 +33,14 @@ código del minitool:
 
 Toda notificación —del bus, de los umbrales locales o de la tool Control— queda
 además registrada en la tool **Alertas**, con su hora. Un toast dura unos
-segundos: si no estabas mirando la pantalla, ahí es donde lo encontrás.
+segundos: si no estabas mirando la pantalla, ahí es donde lo encontrás. En la
+franja de **modo noche** las notificaciones van solo al historial, sin
+interrumpir; las críticas pasan igual.
+
+El minitool **también se publica a sí mismo** como nodo (`labo/nodo/minitool/…`
+y `labo/sensor/minitool/…`), así que aparece en sus propias tools Nodos y
+Sensores, con last-will incluido. Era el único equipo que, si se colgaba, no
+quedaba registrado en ningún lado.
 
 El payload de un sensor es simplemente el número como texto (`"23.5"`). La
 magnitud (`temp`, `hum`, `suelo`, `rssi`…) define la unidad y los umbrales por
