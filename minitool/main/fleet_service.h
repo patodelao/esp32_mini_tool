@@ -40,6 +40,15 @@ bool fleet_is_online(const char *id);
 /* IP del nodo i, si la publicó. Devuelve false si no se conoce. */
 bool fleet_get_ip(int i, char *ip, int ip_size);
 
+/* Marca el estado de un nodo SIN pasar por el broker.
+ *
+ * Existe por el propio reloj: publicaba su "online" y se quedaba esperando que
+ * el broker se lo devolviera para enterarse. Ese eco no siempre vuelve, así
+ * que el minitool se mostraba offline a sí mismo estando conectado y
+ * publicando. Preguntarle a la red por un estado que uno ya conoce es frágil
+ * y, encima, más lento. */
+void fleet_set_local(const char *id, bool online);
+
 #ifdef __cplusplus
 }
 #endif

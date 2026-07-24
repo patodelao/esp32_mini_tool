@@ -8,6 +8,7 @@
 #include "self_node.h"
 #include "mqtt_hub.h"
 #include "wifi_manager.h"
+#include "fleet_service.h"
 
 #include "esp_timer.h"
 #include "esp_log.h"
@@ -49,8 +50,25 @@ static void publish_all(void)
 
     char buf[24];
 
+    /* El "online" se republica en CADA ciclo, no una sola vez por sesión.
+     *
+     * Cuando el reloj se reinicia (un OTA, por ejemplo) el broker tarda unos
+     * segundos en darse cuenta de que la conexión vieja murió y recién ahí
+     * dispara su last-will retenido. Para entonces la sesión nueva ya publicó
+     * su "online", así que el "offline" llega DESPUÉS y pisa el valor bueno:
+     * el nodo queda marcado como caído estando vivo. Se vio en el propio panel
+     * del reloj, que se mostraba a sí mismo offline recién actualizado.
+     *
+     * Insistir cada minuto lo repara solo. Son 13 bytes: no vale la pena
+     * ninguna solución más fina. */
+    mqtt_hub_publish(SELF_NODE_STATUS_TOPIC, "online", 1, true);
+
+    /* Y además se marca a sí mismo, sin esperar el eco del broker: ese eco no
+     * siempre vuelve, y el reloj terminaba mostrándose offline en su propia
+     * tool Nodos estando conectado y publicando. */
+    fleet_set_local(SELF_NODE_ID, true);
+
     if (!s_announced) {
-        mqtt_hub_publish(SELF_NODE_STATUS_TOPIC, "online", 1, true);
         if (get_ip(buf, sizeof(buf))) mqtt_hub_publish(TOPIC_IP, buf, 1, true);
         s_announced = true;
         ESP_LOGI(TAG, "Anunciado como nodo '%s'", SELF_NODE_ID);

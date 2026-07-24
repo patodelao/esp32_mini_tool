@@ -127,6 +127,15 @@ bool fleet_get(int idx, char *id, int id_size, bool *online, uint32_t *age_s)
     return false;
 }
 
+void fleet_set_local(const char *id, bool online)
+{
+    if (!id || !id[0]) return;
+    node_t *n = find_or_add(id);
+    if (!n) return;
+    n->online = online;
+    n->last_us = esp_timer_get_time();
+}
+
 bool fleet_is_online(const char *id)
 {
     for (int i = 0; i < MAX_NODES; i++) {

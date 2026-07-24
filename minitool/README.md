@@ -105,8 +105,16 @@ y con snap al centro.
 
 En el menú, además:
 
-- **La píldora del centro crece.** El foco se lee sin tener que interpretar el
-  degradé de opacidad: hay una elegida, no una lista que se desvanece.
+- **La píldora del centro se resalta** con fondo más claro y un borde del color
+  de la tool. El foco se lee sin tener que interpretar el degradé de opacidad:
+  hay una elegida, no una lista que se desvanece.
+
+  > Un primer intento la agrandaba con `transform_zoom` y salía **negra**:
+  > LVGL 8 dibuja el objeto transformado en un buffer aparte y una tarjeta con
+  > hijos (el chip y el texto) no se compone bien. Escalar no era el objetivo;
+  > el objetivo era que se note cuál está elegida, y eso se consigue sin tocar
+  > el pipeline de dibujo.
+
 - **El marco del borde es la barra de scroll.** Una barra recta en una pantalla
   redonda queda mal y ocupa lugar; el borde ya es circular, así que el
   recorrido se dibuja ahí y toma el color de la tool en foco.

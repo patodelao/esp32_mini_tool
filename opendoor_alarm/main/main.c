@@ -273,6 +273,14 @@ static void publish_salud(void)
     }
     char buf[24];
 
+    /* El "online" va en cada ronda de telemetria, no solo al conectar. Si el
+       nodo se reinicia (un OTA, por ejemplo), el broker tarda unos segundos en
+       notar que la conexion vieja murio y recien ahi dispara su last-will
+       retenido; para entonces la sesion nueva ya publico su "online", asi que
+       el "offline" llega despues y pisa el valor bueno. Insistir cada minuto
+       lo repara solo, y son 13 bytes. */
+    esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_STATUS, "online", 0, 1, 1 /*retain*/);
+
     wifi_ap_record_t ap;
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         snprintf(buf, sizeof(buf), "%d", ap.rssi);

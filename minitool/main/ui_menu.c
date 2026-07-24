@@ -235,14 +235,23 @@ static void list_curve_cb(lv_event_t *e)
         if (opa < 60) opa = 60;
         lv_obj_set_style_opa(child, (lv_opa_t)opa, 0);
 
-        /* La del centro crece un poco. Es lo que separa "la lista se ve" de
-         * "hay una elegida": el foco se lee sin tener que interpretar el
-         * degradé de opacidad. 256 = tamaño natural. */
-        int zoom = 280 - (dy * 24) / 40;
-        if (zoom < 256) zoom = 256;
-        lv_obj_set_style_transform_zoom(child, zoom, 0);
-
         if (dy < focus_dy) { focus_dy = dy; focus = (int)i; }
+    }
+
+    /* Resaltar la del centro.
+     *
+     * Acá había un transform_zoom para agrandarla, y salía NEGRA: LVGL 8
+     * dibuja el objeto transformado en un buffer aparte, y con una tarjeta con
+     * hijos (el chip y el texto) el resultado no se compone bien. Escalar no
+     * era el objetivo de todos modos — el objetivo era que se note cuál está
+     * elegida, y eso se consigue con fondo más claro y un borde del color de
+     * la tool, sin tocar el pipeline de dibujo. */
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *child = lv_obj_get_child(cont, i);
+        bool on = ((int)i == focus);
+        lv_obj_set_style_bg_color(child, lv_color_hex(on ? UI_CARD_PRESS : UI_CARD), 0);
+        lv_obj_set_style_border_width(child, on ? 2 : 0, 0);
+        if (on) lv_obj_set_style_border_color(child, lv_color_hex(pos_accent(focus)), 0);
     }
 
     /* Recorrido de la lista sobre el borde, con el color de la tool en foco. */
@@ -282,10 +291,10 @@ static lv_obj_t *card_create(int pos)
     lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(card, card_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)pos);
 
-    /* El zoom del foco tiene que crecer desde el centro de la tarjeta; el
-     * pivote por defecto es la esquina y la haría escaparse hacia abajo. */
-    lv_obj_set_style_transform_pivot_x(card, CARD_W / 2, 0);
-    lv_obj_set_style_transform_pivot_y(card, CARD_H / 2, 0);
+    /* El borde del foco se pinta en list_curve_cb; acá solo se reserva para
+     * que no reacomode el contenido al aparecer. */
+    lv_obj_set_style_border_width(card, 0, 0);
+    lv_obj_set_style_border_opa(card, LV_OPA_COVER, 0);
 
     lv_obj_t *chip = lv_obj_create(card);
     lv_obj_remove_style_all(chip);
