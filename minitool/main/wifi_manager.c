@@ -52,6 +52,8 @@ static bool s_sntp_started = false;
 
 bool wifi_manager_is_connected(void) { return s_connected; }
 
+bool wifi_manager_should_connect(void) { return s_should_connect; }
+
 void wifi_manager_get_ssid(char *buf, size_t len)
 {
     if (buf && len) {

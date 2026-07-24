@@ -154,6 +154,27 @@ desde F-Droid (no está en Play Store). En Xiaomi/MIUI hay que darle
 **autoinicio** y **batería sin restricciones**, o deja de reenviar a los pocos
 minutos.
 
+## Estado del sistema
+
+Config → **Estado**. No informa: diagnostica. Cada línea responde una pregunta
+que uno se hace justo en ese momento:
+
+| Línea | Qué responde |
+|---|---|
+| **Wi-Fi** | A qué red apunta, y si está *buscando* o *apagado* |
+| **MQTT** | Si hay red pero el broker no contesta |
+| **Hora** | Si sincronizó (sin hora no hay alarmas, récords ni registro) |
+| **Datos** | Si el registro histórico está guardando |
+
+La distinción entre *buscando* y *apagado* es la que faltaba: "sin conexión"
+tapaba las dos, y son problemas opuestos. Con el SSID al lado se ve enseguida
+si está intentando entrar a la red equivocada.
+
+En la carátula, el icono de Wi-Fi **ya no desaparece** cuando no hay red:
+queda rojo si busca y no llega, gris si está apagado a propósito. Antes se
+escondía, y una carátula sin iconos se ve igual de prolija que una conectada —
+el reloj podía estar incomunicado durante horas sin que nada lo delatara.
+
 ## Pantalla y energía
 
 - Se apaga sola tras el tiempo configurado (45 s por defecto).

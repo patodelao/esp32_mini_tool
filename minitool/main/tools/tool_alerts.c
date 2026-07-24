@@ -9,7 +9,11 @@
  * refri), umbrales locales de sensores y confirmaciones de la tool Control.
  *
  * El botón de papelera vacía la lista (dos toques, como en Sensores). El
- * historial vive solo en RAM: se pierde al reiniciar.
+ * historial se persiste en NVS, así que sobrevive a reinicios y cortes de luz
+ * — que es justo cuando querés saber qué pasó.
+ *
+ * OJO: acá está el HISTORIAL. Los umbrales de cada sensor se editan en la tool
+ * Sensores, tocando el sensor y después el engranaje.
  */
 #include "tool.h"
 #include "ui_theme.h"

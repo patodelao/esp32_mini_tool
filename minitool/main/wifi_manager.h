@@ -29,6 +29,12 @@ void wifi_manager_disconnect(void);
 /* true si hay IP asignada. */
 bool wifi_manager_is_connected(void);
 
+/* true si el reloj ESTÁ INTENTANDO conectarse (aunque todavía no lo logre).
+ * Sin esto, "no conectado" tapa dos situaciones muy distintas: que la clave
+ * esté mal o el router lejos, o que directamente nadie le pidió conectarse. La
+ * pantalla de Estado las distingue. */
+bool wifi_manager_should_connect(void);
+
 /* SSID configurado actualmente (copia a buf). */
 void wifi_manager_get_ssid(char *buf, size_t len);
 

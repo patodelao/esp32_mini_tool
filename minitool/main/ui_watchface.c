@@ -14,6 +14,7 @@
 
 #include "lvgl.h"
 #include "wifi_manager.h"
+#include "ui_theme.h"
 #include "bt_manager.h"
 #include "weather_service.h"
 #include "pedometer_service.h"
@@ -142,11 +143,18 @@ static void wf_tick_cb(lv_timer_t *t)
 
     lv_arc_set_value(s_arc, tm_info.tm_sec);
 
-    /* Presencia = conectado: el icono aparece solo cuando hay conexión */
+    /* El icono NO se esconde cuando no hay red: cambia de color.
+     *
+     * Antes desaparecía, y una carátula sin iconos se ve igual de prolija que
+     * una conectada — el reloj podía estar incomunicado durante horas sin que
+     * nada lo delatara. Un estado invisible es un estado que no se diagnostica.
+     * Rojo si está buscando y no llega; gris si el Wi-Fi está apagado a
+     * propósito, que no es una falla. */
     if (wifi_manager_is_connected()) {
-        lv_obj_clear_flag(s_wifi_icon, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_text_color(s_wifi_icon, lv_color_hex(0x8FA8C8), 0);
     } else {
-        lv_obj_add_flag(s_wifi_icon, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_text_color(s_wifi_icon,
+            lv_color_hex(wifi_manager_should_connect() ? UI_ALERT : UI_MUTED), 0);
     }
     bt_state_t bt = bt_manager_state();
     bool bt_on = (bt == BT_STATE_ADVERTISING || bt == BT_STATE_CONNECTED);
