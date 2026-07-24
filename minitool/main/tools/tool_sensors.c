@@ -606,10 +606,11 @@ static void list_build(void)
     int n = sensor_count();
     for (int i = 0; i < n && i < (int)(sizeof(s_rows) / sizeof(s_rows[0])); i++) {
         lv_obj_t *btn = lv_btn_create(s_list_view);
-        lv_obj_set_size(btn, LV_PCT(100), 34);
-        lv_obj_set_style_radius(btn, 17, 0);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1A2733), 0);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x27384A), LV_STATE_PRESSED);
+        lv_obj_set_size(btn, 182, 40);
+        lv_obj_set_style_radius(btn, 20, 0);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(UI_CARD), 0);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(UI_CARD_PRESS), LV_STATE_PRESSED);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
         lv_obj_add_event_cb(btn, row_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
         lv_obj_t *lbl = lv_label_create(btn);
@@ -626,6 +627,15 @@ static void list_refresh(void)
     if (!s_list_view) return;
     if (s_rows_n != sensor_count()) list_build();
     for (int i = 0; i < s_rows_n; i++) row_text(s_rows[i], i);
+
+    /* El aviso de "sin sensores" lo apagaba SOLO refresh(), que corre en la
+     * vista de detalle. Como se entra por la lista, el cartel se quedaba
+     * prendido detrás de las filas: un "labo/sensor/<id>" flotando en el medio
+     * de la pantalla que parecía parte del fondo. */
+    if (s_empty) {
+        if (s_rows_n == 0) lv_obj_clear_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
+        else               lv_obj_add_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 /* Alterna entre lista y detalle. */
@@ -663,15 +673,22 @@ static void sensors_open(lv_obj_t *parent)
     s_sel = 0;
     s_confirm = false;
 
-    /* La lista: se entra por acá. */
+    /* La lista: se entra por acá. Mismo lenguaje visual que Config — píldoras
+     * centradas, sin barra de scroll y con snap, que en una pantalla redonda
+     * se lee mucho mejor que una lista recta pegada al borde. */
     s_list_view = lv_obj_create(parent);
     lv_obj_remove_style_all(s_list_view);
-    lv_obj_set_size(s_list_view, 200, 196);
-    lv_obj_align(s_list_view, LV_ALIGN_CENTER, 0, 6);
+    lv_obj_set_size(s_list_view, 240, 240);
+    lv_obj_center(s_list_view);
     lv_obj_set_flex_flow(s_list_view, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(s_list_view, 5, 0);
+    lv_obj_set_flex_align(s_list_view, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(s_list_view, 7, 0);
+    lv_obj_set_style_pad_top(s_list_view, 100, 0);      /* centra la 1ª fila */
+    lv_obj_set_style_pad_bottom(s_list_view, 100, 0);   /* y la última */
     lv_obj_set_scroll_dir(s_list_view, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(s_list_view, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_scroll_snap_y(s_list_view, LV_SCROLL_SNAP_CENTER);
+    lv_obj_set_scrollbar_mode(s_list_view, LV_SCROLLBAR_MODE_OFF);
     lv_obj_add_flag(s_list_view, LV_OBJ_FLAG_EVENT_BUBBLE);   /* deja salir por gesto */
 
     /* El detalle vive en su propio contenedor para poder ocultarlo entero. */

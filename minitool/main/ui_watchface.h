@@ -16,6 +16,19 @@ extern "C" {
 void ui_watchface_show(void);
 bool ui_watchface_active(void);
 
+/* --- Dato elegible de la carátula -----------------------------------------
+ *
+ * Abajo a la izquierda hay un hueco que antes mostraba siempre los pasos del
+ * día. Los pasos no le sirven a todo el mundo, pero el hueco sí: es el único
+ * lugar donde se lee un dato sin tocar la pantalla. Así que ahora se elige qué
+ * va ahí — los pasos o cualquier sensor del home-lab.
+ *
+ * El id vacío ("") significa pasos. La elección se guarda en NVS. */
+#define WF_SLOT_STEPS ""
+
+void ui_watchface_set_slot(const char *sensor_id);
+void ui_watchface_get_slot(char *out, int out_size);
+
 #ifdef __cplusplus
 }
 #endif

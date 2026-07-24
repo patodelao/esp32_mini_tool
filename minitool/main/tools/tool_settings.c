@@ -36,6 +36,7 @@ extern const tool_t tool_wifiscan;
 extern const tool_t tool_netinfo;
 extern const tool_t tool_wifiqr;
 extern const tool_t tool_bt;
+extern const tool_t tool_wfdata;
 
 /* Geometría */
 #define SCREEN_R     120    /* radio de la pantalla, para curvar la lista */
@@ -457,6 +458,8 @@ static void settings_open(lv_obj_t *parent)
 
     lv_obj_t *c = card_create(LV_SYMBOL_EYE_OPEN, 0xF1C40F, "Brillo", true, page_brightness, NULL);
     s_val_bright = card_value(c);
+
+    c = card_create(LV_SYMBOL_IMAGE, 0x2ED9A3, "Caratula", false, open_tool_cb, (void *)&tool_wfdata);
 
     c = card_create(LV_SYMBOL_POWER, 0x3498DB, "Apagar", true, page_sleep, NULL);
     s_val_sleep = card_value(c);

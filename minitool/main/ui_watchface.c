@@ -1,10 +1,16 @@
 /*
  * ui_watchface.c — Carátula de reposo: hora grande + arco de segundos.
  *
- * Abajo, dos datos que uno quiere mirar de reojo sin entrar a ninguna tool:
- * los pasos del día y la humedad del suelo de la planta. Este último se pone
- * rojo cuando hay que regar, que es la única información del home-lab que
- * exige una acción concreta.
+ * Abajo, dos datos que uno quiere mirar de reojo sin entrar a ninguna tool.
+ *
+ * El de la derecha es la humedad del suelo de la planta, que se pone rojo
+ * cuando hay que regar — la única información del home-lab que exige una
+ * acción concreta.
+ *
+ * El de la izquierda se ELIGE (Config → Carátula): los pasos del día o
+ * cualquier sensor. Antes eran siempre los pasos, pero el valor no está en los
+ * pasos sino en el hueco: es el único lugar donde se lee un dato sin tocar la
+ * pantalla, y qué dato merece ese lugar depende de cada uno.
  */
 #include "ui_watchface.h"
 
@@ -21,6 +27,8 @@
 #include "sensor_service.h"
 #include "sensor_alert.h"
 #include "ui_quick.h"
+
+#include "nvs.h"
 
 LV_FONT_DECLARE(font_weather_28);
 
@@ -56,15 +64,79 @@ static void wf_close(void)
     s_steps_lbl = s_soil_lbl = NULL;
 }
 
+/* ------------------------- Dato elegible (izquierda) ----------------------- */
+
+/* "" = pasos; si no, el id de un sensor ("pieza/temp"). */
+static char s_slot[SENSOR_ID_MAX] = WF_SLOT_STEPS;
+
+static void slot_load(void)
+{
+    nvs_handle_t h;
+    if (nvs_open("cfg", NVS_READONLY, &h) != ESP_OK) return;
+    size_t len = sizeof(s_slot);
+    if (nvs_get_str(h, "wf_slot", s_slot, &len) != ESP_OK) s_slot[0] = '\0';
+    nvs_close(h);
+}
+
+void ui_watchface_get_slot(char *out, int out_size)
+{
+    if (out && out_size) strlcpy(out, s_slot, out_size);
+}
+
+void ui_watchface_set_slot(const char *sensor_id)
+{
+    strlcpy(s_slot, sensor_id ? sensor_id : "", sizeof(s_slot));
+
+    nvs_handle_t h;
+    if (nvs_open("cfg", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_str(h, "wf_slot", s_slot);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
 /* Pasos del día, compactos: "1234" o "12.3k" para que no desborde. */
 static void render_steps(void)
 {
-    if (!s_steps_lbl) return;
     uint32_t s = pedometer_steps();
     char buf[16];
     if (s < 10000) snprintf(buf, sizeof(buf), "%lu", (unsigned long)s);
     else           snprintf(buf, sizeof(buf), "%.1fk", (double)s / 1000.0);
     lv_label_set_text(s_steps_lbl, buf);
+    lv_obj_set_style_text_color(s_steps_lbl, lv_color_hex(UI_OK), 0);
+}
+
+/* El sensor elegido, con el mismo código de color que el resto del sistema.
+ * Si todavía no publicó nada se muestra un guión en vez de esconder el hueco:
+ * "elegí este dato y no está llegando" es información. */
+static void render_slot(void)
+{
+    if (!s_steps_lbl) return;
+
+    if (s_slot[0] == '\0') { render_steps(); return; }
+
+    int n = sensor_count();
+    for (int i = 0; i < n; i++) {
+        char id[SENSOR_ID_MAX], val[16];
+        uint32_t age = 0;
+        if (!sensor_get(i, id, sizeof(id), val, sizeof(val), &age)) continue;
+        if (strcmp(id, s_slot) != 0) continue;
+
+        char buf[24];
+        const char *u = sensor_unit(id);
+        snprintf(buf, sizeof(buf), u[0] ? "%s%s" : "%s%s", val, u);
+        lv_label_set_text(s_steps_lbl, buf);
+
+        lv_color_t c = lv_color_hex(UI_TEXT);
+        sensor_alert_state_t st = sensor_alert_state(id);
+        if (age > sensor_alert_stale_limit(id))                     c = lv_color_hex(0x4A5560);
+        else if (st == SENSOR_ALERT_LOW || st == SENSOR_ALERT_HIGH) c = lv_color_hex(UI_ALERT);
+        lv_obj_set_style_text_color(s_steps_lbl, c, 0);
+        return;
+    }
+
+    lv_label_set_text(s_steps_lbl, "--");
+    lv_obj_set_style_text_color(s_steps_lbl, lv_color_hex(0x4A5560), 0);
 }
 
 /* Humedad del suelo del primer sensor de suelo que haya. Rojo = hay que regar,
@@ -164,7 +236,7 @@ static void wf_tick_cb(lv_timer_t *t)
         lv_obj_add_flag(s_bt_icon, LV_OBJ_FLAG_HIDDEN);
     }
 
-    render_steps();
+    render_slot();
     render_soil();
 
     /* Clima: refresca (auto-limitado) y refleja la caché compartida */
@@ -186,6 +258,7 @@ void ui_watchface_show(void)
 {
     if (s_wf) return;
     s_wx_gen = 0xFFFFFFFF; /* forzar refresco del clima desde caché al mostrar */
+    slot_load();
 
     s_wf = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(s_wf);

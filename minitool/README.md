@@ -99,9 +99,17 @@ herramientas son solo vistas.
 píldora). Los nombres son semánticos a propósito: si mañana cambia el verde,
 cambia en un solo lugar y nada queda a medio camino.
 
-El menú y la tool Config comparten el mismo lenguaje: lista de píldoras con el
-ícono en un chip de color, curvada siguiendo el borde circular y con snap al
-centro.
+El menú, Config, Sensores y Carátula comparten el mismo lenguaje: lista de
+píldoras con el ícono en un chip de color, curvada siguiendo el borde circular
+y con snap al centro.
+
+En el menú, además:
+
+- **La píldora del centro crece.** El foco se lee sin tener que interpretar el
+  degradé de opacidad: hay una elegida, no una lista que se desvanece.
+- **El marco del borde es la barra de scroll.** Una barra recta en una pantalla
+  redonda queda mal y ocupa lugar; el borde ya es circular, así que el
+  recorrido se dibuja ahí y toma el color de la tool en foco.
 
 ### Herramientas
 
@@ -174,6 +182,22 @@ En la carátula, el icono de Wi-Fi **ya no desaparece** cuando no hay red:
 queda rojo si busca y no llega, gris si está apagado a propósito. Antes se
 escondía, y una carátula sin iconos se ve igual de prolija que una conectada —
 el reloj podía estar incomunicado durante horas sin que nada lo delatara.
+
+## El dato de la carátula
+
+Abajo a la izquierda hay un hueco que mostraba siempre los pasos del día. El
+valor no estaba en los pasos sino en el hueco: es el único lugar donde se lee
+un dato **sin tocar la pantalla**. Qué dato merece ese lugar depende de cada
+uno, así que ahora se elige en **Config → Carátula**: los pasos, o cualquier
+sensor del home-lab.
+
+La lista se arma en el momento con los sensores vivos, así que un nodo nuevo
+aparece solo. El valor elegido se pinta con el mismo código de color del resto
+del sistema (rojo fuera de umbral, gris si el dato está viejo). Si el sensor
+deja de existir se muestra `--` en vez de esconderse: haberlo elegido y que no
+llegue también es información.
+
+A la derecha sigue la humedad del suelo, que se pone roja cuando hay que regar.
 
 ## Pantalla y energía
 

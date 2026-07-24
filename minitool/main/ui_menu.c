@@ -38,6 +38,12 @@ static const char *TAG = "menu";
 #define LIST_PAD  ((240 - CARD_H) / 2)
 
 static lv_obj_t *s_list = NULL;
+
+/* El marco del borde no es solo decorativo: su indicador es la barra de scroll.
+ * En una pantalla redonda una barra recta pegada al borde queda mal y se come
+ * espacio. El borde YA es circular, así que el recorrido de la lista se dibuja
+ * ahí mismo, y de paso toma el color de la tool que está en foco. */
+static lv_obj_t *s_frame_arc = NULL;
 static lv_obj_t *s_cards[64];
 static lv_obj_t *s_clock_lbl = NULL;
 static lv_obj_t *s_wifi_icon = NULL;
@@ -137,6 +143,7 @@ static void open_tool_ptr(const tool_t *tool)
 
     lv_obj_clean(lv_scr_act());
     s_list = NULL;
+    s_frame_arc = NULL;               /* lo borró el clean; no dejarlo colgado */
     s_clock_lbl = s_wifi_icon = s_bt_icon = NULL;
     s_current_tool = tool;
 
@@ -185,12 +192,15 @@ static void create_frame_arc(lv_obj_t *parent)
     lv_obj_set_size(arc, 236, 236);
     lv_obj_center(arc);
     lv_arc_set_bg_angles(arc, 0, 360);
+    lv_arc_set_rotation(arc, 270);        /* el recorrido arranca arriba */
+    lv_arc_set_range(arc, 0, 1000);
     lv_arc_set_value(arc, 0);
     lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
     lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_arc_width(arc, 3, LV_PART_MAIN);
     lv_obj_set_style_arc_color(arc, lv_color_hex(0x142433), LV_PART_MAIN);
-    lv_obj_set_style_arc_width(arc, 0, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(arc, 3, LV_PART_INDICATOR);
+    s_frame_arc = arc;
 }
 
 /*
@@ -204,6 +214,9 @@ static void list_curve_cb(lv_event_t *e)
     lv_area_t ca;
     lv_obj_get_coords(cont, &ca);
     lv_coord_t center_y = (ca.y1 + ca.y2) / 2;
+
+    int focus = 0;              /* tarjeta más cercana al centro */
+    int focus_dy = SCREEN_R;
 
     uint32_t n = lv_obj_get_child_cnt(cont);
     for (uint32_t i = 0; i < n; i++) {
@@ -221,6 +234,25 @@ static void list_curve_cb(lv_event_t *e)
         int opa = 255 - (dy * 170) / SCREEN_R;
         if (opa < 60) opa = 60;
         lv_obj_set_style_opa(child, (lv_opa_t)opa, 0);
+
+        /* La del centro crece un poco. Es lo que separa "la lista se ve" de
+         * "hay una elegida": el foco se lee sin tener que interpretar el
+         * degradé de opacidad. 256 = tamaño natural. */
+        int zoom = 280 - (dy * 24) / 40;
+        if (zoom < 256) zoom = 256;
+        lv_obj_set_style_transform_zoom(child, zoom, 0);
+
+        if (dy < focus_dy) { focus_dy = dy; focus = (int)i; }
+    }
+
+    /* Recorrido de la lista sobre el borde, con el color de la tool en foco. */
+    if (s_frame_arc) {
+        lv_coord_t top = lv_obj_get_scroll_y(cont);
+        lv_coord_t bottom = lv_obj_get_scroll_bottom(cont);
+        lv_coord_t total = top + bottom;
+        lv_arc_set_value(s_frame_arc, total > 0 ? (int)((top * 1000) / total) : 0);
+        lv_obj_set_style_arc_color(s_frame_arc,
+                                   lv_color_hex(pos_accent(focus)), LV_PART_INDICATOR);
     }
 }
 
@@ -249,6 +281,11 @@ static lv_obj_t *card_create(int pos)
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(card, card_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)pos);
+
+    /* El zoom del foco tiene que crecer desde el centro de la tarjeta; el
+     * pivote por defecto es la esquina y la haría escaparse hacia abajo. */
+    lv_obj_set_style_transform_pivot_x(card, CARD_W / 2, 0);
+    lv_obj_set_style_transform_pivot_y(card, CARD_H / 2, 0);
 
     lv_obj_t *chip = lv_obj_create(card);
     lv_obj_remove_style_all(chip);

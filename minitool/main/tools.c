@@ -24,6 +24,7 @@ extern const tool_t tool_sensors;
 extern const tool_t tool_control;
 extern const tool_t tool_alerts;
 extern const tool_t tool_wifiqr;
+extern const tool_t tool_wfdata;
 extern const tool_t tool_settings;
 extern const tool_t tool_phone;
 extern const tool_t tool_alarm;
@@ -53,6 +54,7 @@ const tool_t *const g_tools[] = {
     &tool_wifiscan,
     &tool_netinfo,
     &tool_wifiqr,
+    &tool_wfdata,
     &tool_bt,
 };
 
