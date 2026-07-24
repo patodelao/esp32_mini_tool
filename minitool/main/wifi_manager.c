@@ -1,6 +1,14 @@
 /*
  * wifi_manager.c — Wi-Fi STA no bloqueante + SNTP (zona horaria de Chile).
- * Credenciales persistidas en NVS (namespace "cfg", claves "ssid"/"pass").
+ *
+ * Credenciales persistidas en NVS (namespace "cfg", claves "ssid"/"pass"), que
+ * es lo que graba la tool Red y lo que manda. Si la NVS está vacía se cae a las
+ * credenciales compiladas en secrets.h, igual que los otros dos nodos.
+ *
+ * Eso último no es un lujo: un borrado de flash deja la NVS en blanco y antes
+ * el reloj arrancaba con el menú normal pero sin asociarse a ninguna red, sin
+ * MQTT y sin panel web — mudo y sin ninguna señal de qué le pasaba. Con el
+ * respaldo compilado, vuelve solo.
  */
 #include "wifi_manager.h"
 
@@ -20,9 +28,18 @@
 
 static const char *TAG = "wifi";
 
-/* Valores por defecto si NVS está vacío (primer arranque) */
-#define WIFI_SSID_DEFAULT "invitado"
-#define WIFI_PASS_DEFAULT "111111111111111"
+/* Valores por defecto si NVS está vacío (primer arranque o flash borrada).
+ * secrets.h no se versiona; sin él el proyecto compila igual, pero con relleno
+ * que no conecta a nada y hay que cargar la red a mano en la tool Red. */
+#if __has_include("secrets.h")
+#  include "secrets.h"
+#  define WIFI_SSID_DEFAULT WIFI_SSID
+#  define WIFI_PASS_DEFAULT WIFI_PASSWORD
+#else
+#  warning "Sin main/secrets.h: copialo de secrets.h.example para que el reloj se conecte solo"
+#  define WIFI_SSID_DEFAULT "MiRedWiFi"
+#  define WIFI_PASS_DEFAULT "mi-clave-wifi"
+#endif
 
 #define NVS_NAMESPACE "cfg"
 
@@ -30,7 +47,7 @@ static char s_ssid[WIFI_SSID_MAX + 1] = WIFI_SSID_DEFAULT;
 static char s_pass[WIFI_PASS_MAX + 1] = WIFI_PASS_DEFAULT;
 
 static bool s_connected = false;      /* hay IP asignada */
-static bool s_should_connect = false; /* intención del usuario: mantener conexión */
+static bool s_should_connect = true;  /* intención del usuario: mantener conexión */
 static bool s_sntp_started = false;
 
 bool wifi_manager_is_connected(void) { return s_connected; }
@@ -60,7 +77,14 @@ static void load_credentials(void)
     len = sizeof(s_pass);
     nvs_get_str(nvs, "pass", s_pass, &len);
     
-    /* Leemos si la última vez lo dejamos conectado (1) o desconectado (0) */
+    /* Leemos si la última vez lo dejamos conectado (1) o desconectado (0).
+     *
+     * Si la clave no está, se mantiene el true de arriba: sin nada guardado la
+     * intención razonable es conectarse. Antes el defecto era false y una NVS
+     * en blanco dejaba al reloj esperando para siempre una orden que nadie iba
+     * a dar — arrancaba con el menú normal y sin red, que es de los estados más
+     * difíciles de diagnosticar mirando la pantalla. Solo un "desconectar"
+     * explícito (autoconnect=0) lo deja apagado. */
     uint8_t auto_conn = 0;
     if (nvs_get_u8(nvs, "autoconnect", &auto_conn) == ESP_OK) {
         s_should_connect = (auto_conn == 1);

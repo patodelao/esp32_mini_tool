@@ -30,6 +30,28 @@ idf.py -p COM<x> flash monitor
 En un checkout nuevo, antes del primer build: `idf.py set-target esp32s3`
 (`sdkconfig.defaults` no fija el target y el default no entra en memoria).
 
+### Credenciales
+
+La red se carga desde la tool **Red** y queda en NVS; eso es lo que manda. Como
+respaldo, `main/secrets.h` lleva las credenciales compiladas, igual que los
+otros dos nodos:
+
+```bash
+copy minitool\main\secrets.h.example minitool\main\secrets.h
+```
+
+Está en `.gitignore`; el `.example` sí se versiona. Sin él el proyecto compila
+(avisa con un `#warning`) pero arranca con relleno que no conecta a nada.
+
+Sirve para un caso concreto: si la NVS queda en blanco, el reloj vuelve solo a
+la red. Antes no lo hacía y era **el estado más difícil de diagnosticar del
+sistema** — la pantalla se ve perfecta, el menú responde, pero no hay Wi-Fi, ni
+MQTT, ni panel web, y nada en pantalla dice por qué. Dos causas se juntaban: sin
+credenciales guardadas quedaban las de relleno, y la intención de conectarse
+también salía de la NVS, así que sin ella el reloj ni siquiera lo intentaba.
+Hoy, si esa clave no está, se asume que sí hay que conectarse; solo un
+"desconectar" explícito lo deja apagado.
+
 ## Cómo se navega
 
 Sin botones físicos, todo es táctil. Vale la pena tener esto a mano:
