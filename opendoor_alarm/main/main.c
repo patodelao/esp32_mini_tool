@@ -550,10 +550,17 @@ static void alarm_task(void *arg)
             ESP_LOGW(TAG, "Puerta ABIERTA: LED a %d ms, buzzer a %d ms",
                      LED_START_DELAY_MS, BUZZER_START_DELAY_MS);
         } else if (!open && was_open) {
-            /* Confirmar el cierre antes de darlo por bueno: el iman rebota. */
+            /* Callar PRIMERO, confirmar después. El iman rebota y por eso el
+               cierre se confirma durante unos segundos, pero antes eso pasaba
+               con el buzzer todavía sonando: cerrabas la puerta y seguía
+               pitando. La confirmación es silenciosa; si resulta que la puerta
+               se reabrió, la vuelta siguiente del bucle vuelve a encender todo
+               sola (was_open sigue en true y open_time_ms ya pasó los
+               umbrales), así que no se pierde nada por apagar antes de tiempo. */
+            alarm_outputs_off();
+
             if (confirm_door_closed_for_ms(DOOR_CLOSED_CONFIRM_MS)) {
                 was_open = false;
-                alarm_outputs_off();
                 publish_door_state("CERRADO");
                 publish_alert("ok", "Puerta cerrada");
                 if (mqtt_ready()) {

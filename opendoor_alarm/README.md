@@ -25,8 +25,12 @@ imposible actualizarlo o pedirle algo mientras dormia.)
    - desde los 20 s: LED alternando rojo/verde.
    - desde los 30 s: buzzer intermitente sincronizado con el parpadeo.
    - cada 5 s: publica heartbeat `ABIERTO` por MQTT.
-5. Al detectar cierre, apaga salidas y confirma cierre estable por 3 s.
-6. Si se confirma, publica `CERRADO` (QoS 1). Si se reabre antes, vuelve a alarma.
+5. Al detectar cierre, **calla el buzzer y apaga el LED en el acto** y recién
+   entonces confirma que el cierre es estable, en silencio, por 3 s. El imán
+   rebota y por eso hay que confirmar, pero antes eso pasaba con el buzzer
+   todavía sonando: cerrabas la puerta y seguía pitando un par de segundos.
+6. Si se confirma, publica `CERRADO` (QoS 1). Si se reabre antes, la vuelta
+   siguiente del bucle vuelve a encender la alarma sola.
 7. Vuelve a vigilar. No duerme: sigue publicando telemetria cada minuto y
    atendiendo el servidor de actualizacion.
 
