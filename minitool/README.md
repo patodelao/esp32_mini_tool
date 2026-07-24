@@ -42,7 +42,7 @@ Sin botones físicos, todo es táctil. Vale la pena tener esto a mano:
 | Deslizar **arriba** | Panel rápido | Lo cierra |
 | Tocar la pantalla | Carátula | Vuelve al menú |
 | Tocar la pantalla | Alarma sonando | La apaga |
-| Tocar el gráfico | Sensores (detalle) | Alterna histórico reciente / 24 h |
+| Tocar el gráfico | Sensores (detalle) | Cicla: reciente → 24 h → 7 días (min/max) |
 | Pulsación **larga** en la papelera | Sensores (detalle) | Olvida el sensor (pide confirmar con una X) |
 
 ## Arquitectura
@@ -92,8 +92,14 @@ duplicar código, y se abren con `ui_menu_open_tool()`.
 ## Sensores y alertas
 
 La tool **Sensores** abre en una lista con todos (hoy 13, entre la pieza, el
-refri y el propio reloj) y al tocar uno se ve su detalle: valor, récord del
-día, gráfico e histórico de 24 h.
+refri y el propio reloj) y al tocar uno se ve su detalle. El gráfico tiene tres
+escalas que se ciclan tocándolo:
+
+| Modo | Qué muestra | Para qué |
+|---|---|---|
+| reciente | últimas 30 lecturas | qué está pasando ahora |
+| 24 h | un promedio por hora | la curva del día (p. ej. cuánto tarda en secarse la maceta) |
+| 7 días | banda min–max de cada día | **a cuánto llegó a bajar el suelo esta semana**, que es lo que hace falta para elegir el umbral de riego con datos |
 
 El motor de umbrales (`sensor_alert.c`) da, por sensor:
 

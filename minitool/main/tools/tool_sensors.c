@@ -30,6 +30,7 @@
 #include "tool.h"
 #include "sensor_service.h"
 #include "sensor_alert.h"
+#include "ui_theme.h"
 #include "mqtt_hub.h"
 
 #include <stdio.h>
@@ -76,7 +77,10 @@ static char          s_ovl_id[SENSOR_ID_MAX];
 static sensor_rule_t s_edit;
 static float s_step = 1, s_rmin = -100, s_rmax = 100;
 static float s_lo_last = 0, s_hi_last = 0;   /* para volver a activar un límite */
-static bool  s_long = false;                 /* gráfico: false=reciente, true=24 h */
+/* Modos del gráfico, que se ciclan tocándolo. */
+typedef enum { CH_RECENT = 0, CH_HOURS, CH_DAYS, CH_COUNT } chart_mode_t;
+static chart_mode_t s_chart_mode = CH_RECENT;
+static lv_chart_series_t *s_ser2 = NULL;   /* segunda serie: máximos por día */
 
 /* "hace 5 s" / "hace 2 min" / "hace 1 h" en un buffer del llamador. */
 static void fmt_age(uint32_t age_s, char *out, int out_size)
@@ -466,41 +470,67 @@ static void refresh(void)
         }
     }
 
-    /* Histórico -> rango del gráfico. En modo largo se grafica un promedio por
-     * hora (hasta 24 h), que es lo que deja ver la curva de secado de la
-     * maceta; si todavía no hay horas cerradas, se cae al histórico corto. */
+    /* Histórico -> gráfico. Tres modos que se ciclan tocándolo:
+     *   reciente : una lectura por punto (últimos 30)
+     *   24 h     : un promedio por hora
+     *   días     : la banda min-max de cada día cerrado, que es la que dice a
+     *              cuánto llegó a bajar el suelo esta semana.
+     * Si el modo elegido todavía no tiene datos, se cae al reciente. */
     float h[SENSOR_HIST > SENSOR_HIST_H ? SENSOR_HIST : SENSOR_HIST_H];
-    int hn = 0;
-    bool showing_long = false;
-    if (s_long) {
+    float dmin[SENSOR_DAYS], dmax[SENSOR_DAYS];
+    int hn = 0, dn = 0;
+    chart_mode_t shown = CH_RECENT;
+
+    if (s_chart_mode == CH_DAYS) {
+        dn = sensor_history_days(s_sel, dmin, dmax, SENSOR_DAYS);
+        if (dn > 1) shown = CH_DAYS;
+    } else if (s_chart_mode == CH_HOURS) {
         hn = sensor_history_hourly(s_sel, h, SENSOR_HIST_H);
-        showing_long = (hn > 1);
+        if (hn > 1) shown = CH_HOURS;
     }
-    if (!showing_long) hn = sensor_history(s_sel, h, SENSOR_HIST);
+    if (shown == CH_RECENT) hn = sensor_history(s_sel, h, SENSOR_HIST);
 
-    /* Texto de la ventana graficada, para el pie. */
     char span[16] = "";
-    if (s_long) {
-        if (showing_long) snprintf(span, sizeof(span), "  |  %d h", hn);
-        else              snprintf(span, sizeof(span), "  |  sin horas");
-    }
+    if (s_chart_mode == CH_HOURS) snprintf(span, sizeof(span), shown == CH_HOURS ? "  |  %d h" : "  |  sin horas", hn);
+    else if (s_chart_mode == CH_DAYS) snprintf(span, sizeof(span), shown == CH_DAYS ? "  |  %d dias" : "  |  sin dias", dn);
 
-    if (hn > 0 && s_chart && s_ser) {
-        float mn = h[0], mx = h[0];
-        for (int i = 1; i < hn; i++) { if (h[i] < mn) mn = h[i]; if (h[i] > mx) mx = h[i]; }
-        int vmin = (int)floorf(mn * 10.0f);
-        int vmax = (int)ceilf(mx * 10.0f);
-        if (vmax - vmin < 2) { vmin -= 5; vmax += 5; } /* evitar rango plano */
-        lv_chart_set_range(s_chart, LV_CHART_AXIS_PRIMARY_Y, vmin, vmax);
-        lv_chart_set_point_count(s_chart, hn);
-        for (int i = 0; i < hn; i++) {
-            lv_chart_set_value_by_id(s_chart, s_ser, i, (int)lroundf(h[i] * 10.0f));
+    if (s_chart && s_ser && s_ser2) {
+        if (shown == CH_DAYS) {
+            /* Dos series: mínimos y máximos de cada día. */
+            float mn = dmin[0], mx = dmax[0];
+            for (int i = 1; i < dn; i++) {
+                if (dmin[i] < mn) mn = dmin[i];
+                if (dmax[i] > mx) mx = dmax[i];
+            }
+            int vmin = (int)floorf(mn * 10.0f), vmax = (int)ceilf(mx * 10.0f);
+            if (vmax - vmin < 2) { vmin -= 5; vmax += 5; }
+            lv_chart_set_range(s_chart, LV_CHART_AXIS_PRIMARY_Y, vmin, vmax);
+            lv_chart_set_point_count(s_chart, dn);
+            for (int i = 0; i < dn; i++) {
+                lv_chart_set_value_by_id(s_chart, s_ser,  i, (int)lroundf(dmin[i] * 10.0f));
+                lv_chart_set_value_by_id(s_chart, s_ser2, i, (int)lroundf(dmax[i] * 10.0f));
+            }
+            lv_chart_set_series_color(s_chart, s_ser,  lv_color_hex(UI_INFO));
+            lv_chart_set_series_color(s_chart, s_ser2, lv_color_hex(UI_WARN));
+            lv_chart_refresh(s_chart);
+        } else if (hn > 0) {
+            /* Una sola serie: la segunda se aparta del rango visible. */
+            float mn = h[0], mx = h[0];
+            for (int i = 1; i < hn; i++) { if (h[i] < mn) mn = h[i]; if (h[i] > mx) mx = h[i]; }
+            int vmin = (int)floorf(mn * 10.0f), vmax = (int)ceilf(mx * 10.0f);
+            if (vmax - vmin < 2) { vmin -= 5; vmax += 5; }
+            lv_chart_set_range(s_chart, LV_CHART_AXIS_PRIMARY_Y, vmin, vmax);
+            lv_chart_set_point_count(s_chart, hn);
+            for (int i = 0; i < hn; i++) {
+                lv_chart_set_value_by_id(s_chart, s_ser, i, (int)lroundf(h[i] * 10.0f));
+                lv_chart_set_value_by_id(s_chart, s_ser2, i, LV_CHART_POINT_NONE);
+            }
+            lv_color_t sc = lv_color_hex(UI_OK);
+            if (stale)             sc = lv_color_hex(UI_WARN);
+            else if (out_of_range) sc = lv_color_hex(UI_ALERT);
+            lv_chart_set_series_color(s_chart, s_ser, sc);
+            lv_chart_refresh(s_chart);
         }
-        lv_color_t sc = lv_color_hex(0x35D07F);
-        if (stale)             sc = lv_color_hex(0xE0A030);
-        else if (out_of_range) sc = lv_color_hex(0xE74C3C);
-        lv_chart_set_series_color(s_chart, s_ser, sc);
-        lv_chart_refresh(s_chart);
     }
 
     /* Pie: índice + antigüedad, o el motivo de la alerta si el valor está
@@ -624,7 +654,7 @@ static void back_to_list_cb(lv_event_t *e)
 static void chart_cb(lv_event_t *e)
 {
     (void)e;
-    s_long = !s_long;
+    s_chart_mode = (chart_mode_t)((s_chart_mode + 1) % CH_COUNT);
     refresh();
 }
 
@@ -684,7 +714,9 @@ static void sensors_open(lv_obj_t *parent)
     lv_obj_set_style_border_width(s_chart, 0, LV_PART_MAIN);
     lv_obj_set_style_size(s_chart, 0, LV_PART_INDICATOR); /* sin puntos */
     lv_obj_set_style_line_color(s_chart, lv_color_hex(0x2A3A48), LV_PART_MAIN);
-    s_ser = lv_chart_add_series(s_chart, lv_color_hex(0x35D07F), LV_CHART_AXIS_PRIMARY_Y);
+    s_ser  = lv_chart_add_series(s_chart, lv_color_hex(UI_OK), LV_CHART_AXIS_PRIMARY_Y);
+    /* Segunda serie: solo se usa en el modo por días (máximos). */
+    s_ser2 = lv_chart_add_series(s_chart, lv_color_hex(UI_WARN), LV_CHART_AXIS_PRIMARY_Y);
 
     s_foot_lbl = lv_label_create(parent);
     lv_obj_set_style_text_font(s_foot_lbl, &lv_font_montserrat_14, 0);
@@ -750,7 +782,7 @@ static void sensors_close(void)
     s_id_lbl = s_val_lbl = s_stats_lbl = s_chart = s_foot_lbl = s_empty = NULL;
     s_ovl_lo = s_ovl_hi = NULL;
     s_reset_btn = s_reset_lbl = s_gear_btn = NULL;
-    s_ser = NULL;
+    s_ser = s_ser2 = NULL;
     s_detail_view = s_list_view = NULL;
     s_rows_n = 0;
     s_detail_mode = false;

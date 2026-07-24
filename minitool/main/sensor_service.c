@@ -34,6 +34,7 @@ static const char *TAG = "sensor_svc";
 #define REC_NS   "sensrec"   /* namespace NVS del récord */
 #define REC_KEY  "recs"      /* blob con el arreglo de récords */
 #define HOUR_KEY "hours"     /* blob con el histórico horario */
+#define DAYS_KEY "days"      /* blob con los récords por día    */
 
 typedef struct {
     char     id[ID_MAX];
@@ -47,6 +48,9 @@ typedef struct {
     float    rec_min, rec_max;
     int32_t  rec_day;            /* id de día (año*366+yday); -1 = sin fijar */
     bool     rec_valid;          /* hay récord acumulado */
+    /* Récords de días cerrados: al cambiar el día, el de ayer se guarda acá */
+    float    day_min[SENSOR_DAYS], day_max[SENSOR_DAYS];
+    int      day_n;
     /* Histórico largo: un promedio por hora */
     float    h_hist[SENSOR_HIST_H];
     int      h_head, h_count;
@@ -80,6 +84,18 @@ typedef struct {
 
 static hour_blob_t s_hsaved[MAX_SENSORS];
 static int         s_hsaved_n = 0;
+
+/* Récords por día, con la misma mecánica: se cargan una vez y cada sensor
+ * recupera los suyos cuando reaparece. */
+typedef struct {
+    char    id[ID_MAX];
+    float   mn[SENSOR_DAYS], mx[SENSOR_DAYS];
+    int16_t n;
+} days_blob_t;
+
+static days_blob_t s_dsaved[MAX_SENSORS];
+static int         s_dsaved_n = 0;
+static volatile bool s_days_dirty = false;
 
 /* Volcado diferido a NVS.
  *
@@ -258,6 +274,68 @@ static void hours_save(void)
     nvs_close(h);
 }
 
+static void days_load(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(REC_NS, NVS_READONLY, &h) != ESP_OK) return;
+    size_t sz = sizeof(s_dsaved);
+    if (nvs_get_blob(h, DAYS_KEY, s_dsaved, &sz) == ESP_OK) {
+        s_dsaved_n = (int)(sz / sizeof(days_blob_t));
+    }
+    nvs_close(h);
+}
+
+static void days_save(void)
+{
+    static days_blob_t buf[MAX_SENSORS];
+    int n = 0;
+    for (int i = 0; i < MAX_SENSORS; i++) {
+        if (!s_sensors[i].used || s_sensors[i].day_n == 0) continue;
+        memset(&buf[n], 0, sizeof(buf[n]));
+        strlcpy(buf[n].id, s_sensors[i].id, sizeof(buf[n].id));
+        memcpy(buf[n].mn, s_sensors[i].day_min, sizeof(buf[n].mn));
+        memcpy(buf[n].mx, s_sensors[i].day_max, sizeof(buf[n].mx));
+        buf[n].n = (int16_t)s_sensors[i].day_n;
+        n++;
+    }
+    nvs_handle_t h;
+    if (nvs_open(REC_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_blob(h, DAYS_KEY, buf, (size_t)n * sizeof(days_blob_t));
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+static void days_restore(sensor_t *s)
+{
+    for (int i = 0; i < s_dsaved_n; i++) {
+        if (strcmp(s_dsaved[i].id, s->id) != 0) continue;
+        memcpy(s->day_min, s_dsaved[i].mn, sizeof(s->day_min));
+        memcpy(s->day_max, s_dsaved[i].mx, sizeof(s->day_max));
+        s->day_n = s_dsaved[i].n;
+        if (s->day_n > SENSOR_DAYS) s->day_n = SENSOR_DAYS;
+        return;
+    }
+}
+
+/* Cierra el día: empuja el récord de hoy al historial. */
+static void day_close(sensor_t *s)
+{
+    if (!s->rec_valid) return;
+    if (s->day_n < SENSOR_DAYS) {
+        s->day_min[s->day_n] = s->rec_min;
+        s->day_max[s->day_n] = s->rec_max;
+        s->day_n++;
+    } else {
+        for (int i = 1; i < SENSOR_DAYS; i++) {
+            s->day_min[i - 1] = s->day_min[i];
+            s->day_max[i - 1] = s->day_max[i];
+        }
+        s->day_min[SENSOR_DAYS - 1] = s->rec_min;
+        s->day_max[SENSOR_DAYS - 1] = s->rec_max;
+    }
+    s_days_dirty = true;
+}
+
 static void hours_restore(sensor_t *s)
 {
     for (int i = 0; i < s_hsaved_n; i++) {
@@ -322,6 +400,7 @@ static void record_update(sensor_t *s, float f)
 
     /* Reset diario: si la hora es válida y cambió el día, empezar de nuevo. */
     if (day >= 0 && s->rec_valid && s->rec_day != day) {
+        day_close(s);          /* guardar el récord de ayer antes de reiniciar */
         s->rec_valid = false;
     }
 
@@ -358,6 +437,7 @@ static sensor_t *find_or_add(const char *id)
     s_sensors[slot].h_hour  = -1;
     record_restore(&s_sensors[slot]);   /* recupera récord de NVS si existe */
     hours_restore(&s_sensors[slot]);    /* y el histórico horario */
+    days_restore(&s_sensors[slot]);     /* y los récords por día */
     return &s_sensors[slot];
 }
 
@@ -402,6 +482,7 @@ static void flush_cb(void *arg)
     (void)arg;
     if (s_rec_dirty)   { s_rec_dirty   = false; records_save(); }
     if (s_hours_dirty) { s_hours_dirty = false; hours_save();   }
+    if (s_days_dirty)  { s_days_dirty  = false; days_save();    }
 }
 
 void sensor_service_init(void)
@@ -411,6 +492,7 @@ void sensor_service_init(void)
     started = true;
     records_load();
     hours_load();
+    days_load();
 
     const esp_timer_create_args_t args = { .callback = flush_cb, .name = "sensor_flush" };
     if (esp_timer_create(&args, &s_flush_timer) == ESP_OK) {
@@ -471,6 +553,18 @@ int sensor_history_hourly(int idx, float *out, int max)
     int start = (s->h_head - s->h_count + SENSOR_HIST_H) % SENSOR_HIST_H;
     for (int i = 0; i < n; i++) {
         out[i] = s->h_hist[(start + i) % SENSOR_HIST_H];
+    }
+    return n;
+}
+
+int sensor_history_days(int idx, float *mins, float *maxs, int max)
+{
+    sensor_t *s = nth(idx);
+    if (!s || !mins || !maxs) return 0;
+    int n = s->day_n < max ? s->day_n : max;
+    for (int i = 0; i < n; i++) {
+        mins[i] = s->day_min[s->day_n - n + i];
+        maxs[i] = s->day_max[s->day_n - n + i];
     }
     return n;
 }

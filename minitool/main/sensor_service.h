@@ -19,6 +19,7 @@ extern "C" {
 
 #define SENSOR_HIST   30   /* puntos del histórico corto (uno por lectura) */
 #define SENSOR_HIST_H 24   /* horas del histórico largo (uno por hora) */
+#define SENSOR_DAYS    7   /* días de récords guardados (min/max)     */
 #define SENSOR_ID_MAX 32
 
 void sensor_service_init(void);
@@ -41,6 +42,15 @@ int sensor_history_hourly(int i, float *out, int max);
 /* Récord diario del sensor i: min y max acumulados (reinicio a medianoche o
  * manual). *valid queda false si aún no hay datos. false si i fuera de rango. */
 bool sensor_get_record(int i, float *min, float *max, bool *valid);
+
+/* Récords de los días YA CERRADOS: min y max de cada uno, el más viejo
+ * primero. Devuelve cuántos días escribió.
+ *
+ * El récord del día se borraba a medianoche y se perdía, así que no había
+ * forma de responder "¿a cuánto llegó a bajar el suelo esta semana?", que es
+ * justo lo que hace falta para elegir un umbral de riego con datos en vez de
+ * a ojo. Se persiste en NVS. */
+int sensor_history_days(int i, float *mins, float *maxs, int max);
 
 /* Borra el récord del sensor i y lo reinicia desde su último valor. */
 void sensor_reset_record(int i);
