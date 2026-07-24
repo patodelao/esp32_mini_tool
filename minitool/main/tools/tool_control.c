@@ -8,6 +8,7 @@
  * Publica y confirma con una notificación flotante; no espera respuesta.
  */
 #include "tool.h"
+#include "ui_theme.h"
 #include "mqtt_hub.h"
 #include "ui_notify.h"
 
@@ -49,11 +50,7 @@ static void cmd_click_cb(lv_event_t *e)
 
 static void control_open(lv_obj_t *parent)
 {
-    lv_obj_t *title = lv_label_create(parent);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x8FA8C8), 0);
-    lv_label_set_text(title, "Control");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+    ui_title(parent, "Control");
 
     lv_obj_t *list = lv_list_create(parent);
     lv_obj_set_size(list, 200, 160);

@@ -18,7 +18,7 @@ static void refresh(void)
     if (s_status_label) {
         lv_label_set_text(s_status_label, connected ? "Conectado" : "Desconectado");
         lv_obj_set_style_text_color(s_status_label,
-                                    connected ? lv_color_hex(0x35D07F) : lv_color_hex(0xFF5A5A), 0);
+                                    connected ? lv_color_hex(0x35D07F) : lv_color_hex(0xE74C3C), 0);
     }
     if (s_ssid_label) {
         char ssid[WIFI_SSID_MAX + 1];

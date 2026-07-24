@@ -65,7 +65,7 @@ static void update_ui_math(void) {
     /* Actualizar textos */
     if (elapsed_days >= CYCLE_DAYS_TARGET) {
         lv_label_set_text(label_days, "¡Listo!");
-        lv_obj_set_style_text_color(label_days, lv_color_hex(0x2ECC71), 0); /* Verde */
+        lv_obj_set_style_text_color(label_days, lv_color_hex(0x35D07F), 0); /* Verde */
         lv_arc_set_value(arc_progress, 100);
     } else {
         lv_label_set_text_fmt(label_days, "Día\n%d / %d", elapsed_days, CYCLE_DAYS_TARGET);

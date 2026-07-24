@@ -19,8 +19,8 @@ static void refresh(void)
     switch (st) {
     case BT_STATE_CONNECTED:   txt = "Conectado";    color = lv_color_hex(0x35D07F); break;
     case BT_STATE_ADVERTISING: txt = "Visible";      color = lv_color_hex(0x4AA8FF); break;
-    case BT_STATE_UNSUPPORTED: txt = "Sin soporte";  color = lv_color_hex(0xFF5A5A); break;
-    default:                   txt = "Apagado";      color = lv_color_hex(0x8899AA); break;
+    case BT_STATE_UNSUPPORTED: txt = "Sin soporte";  color = lv_color_hex(0xE74C3C); break;
+    default:                   txt = "Apagado";      color = lv_color_hex(0x8FA8C8); break;
     }
     if (s_status_label) {
         lv_label_set_text(s_status_label, txt);

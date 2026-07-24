@@ -12,6 +12,7 @@
  * historial vive solo en RAM: se pierde al reiniciar.
  */
 #include "tool.h"
+#include "ui_theme.h"
 #include "ui_notify.h"
 
 #include <stdio.h>
@@ -30,7 +31,7 @@ static int         s_shown = -1;   /* cuántas había en el último dibujado */
 static const char *level_color(notify_level_t lv)
 {
     switch (lv) {
-        case NOTIFY_SUCCESS: return "2ECC71";
+        case NOTIFY_SUCCESS: return "35D07F";
         case NOTIFY_WARNING: return "F1C40F";
         case NOTIFY_ALERT:   return "E74C3C";
         case NOTIFY_INFO:
@@ -133,11 +134,7 @@ static void alerts_open(lv_obj_t *parent)
 {
     s_confirm = false;
 
-    lv_obj_t *title = lv_label_create(parent);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x8FA8C8), 0);
-    lv_label_set_text(title, "Alertas");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+    ui_title(parent, "Alertas");
 
     s_list = lv_obj_create(parent);
     lv_obj_remove_style_all(s_list);

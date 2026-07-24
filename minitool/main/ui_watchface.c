@@ -84,7 +84,7 @@ static void render_soil(void)
         lv_label_set_text(s_soil_lbl, buf);
 
         sensor_alert_state_t st = sensor_alert_state(id);
-        lv_color_t c = lv_color_hex(0x8899AA);
+        lv_color_t c = lv_color_hex(0x8FA8C8);
         if (age > sensor_alert_stale_limit(id))   c = lv_color_hex(0x4A5560);
         else if (st == SENSOR_ALERT_LOW)          c = lv_color_hex(0xE74C3C);
         else if (st == SENSOR_ALERT_HIGH)         c = lv_color_hex(0xE0A030);
@@ -213,7 +213,7 @@ void ui_watchface_show(void)
 
     s_wx_temp = lv_label_create(s_wf);
     lv_obj_set_style_text_font(s_wx_temp, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(s_wx_temp, lv_color_hex(0x8899AA), 0);
+    lv_obj_set_style_text_color(s_wx_temp, lv_color_hex(0x8FA8C8), 0);
     lv_label_set_text(s_wx_temp, "");
     lv_obj_align(s_wx_temp, LV_ALIGN_TOP_MID, 16, 46);
     lv_obj_add_flag(s_wx_temp, LV_OBJ_FLAG_HIDDEN);
@@ -228,19 +228,19 @@ void ui_watchface_show(void)
     /* Fecha */
     s_date_label = lv_label_create(s_wf);
     lv_obj_set_style_text_font(s_date_label, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(s_date_label, lv_color_hex(0x8899AA), 0);
+    lv_obj_set_style_text_color(s_date_label, lv_color_hex(0x8FA8C8), 0);
     lv_obj_align(s_date_label, LV_ALIGN_CENTER, 0, 28);
 
     /* Iconos de estado: arriba, como barra de estado, para dejar el borde
      * inferior libre para los datos. */
     s_wifi_icon = lv_label_create(s_wf);
     lv_label_set_text(s_wifi_icon, LV_SYMBOL_WIFI);
-    lv_obj_set_style_text_color(s_wifi_icon, lv_color_hex(0x8899AA), 0);
+    lv_obj_set_style_text_color(s_wifi_icon, lv_color_hex(0x8FA8C8), 0);
     lv_obj_align(s_wifi_icon, LV_ALIGN_TOP_MID, -14, 20);
 
     s_bt_icon = lv_label_create(s_wf);
     lv_label_set_text(s_bt_icon, LV_SYMBOL_BLUETOOTH);
-    lv_obj_set_style_text_color(s_bt_icon, lv_color_hex(0x8899AA), 0);
+    lv_obj_set_style_text_color(s_bt_icon, lv_color_hex(0x8FA8C8), 0);
     lv_obj_align(s_bt_icon, LV_ALIGN_TOP_MID, 14, 20);
 
     /* Fila inferior: pasos y planta. */
@@ -252,7 +252,7 @@ void ui_watchface_show(void)
 
     s_soil_lbl = lv_label_create(s_wf);
     lv_obj_set_style_text_font(s_soil_lbl, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(s_soil_lbl, lv_color_hex(0x8899AA), 0);
+    lv_obj_set_style_text_color(s_soil_lbl, lv_color_hex(0x8FA8C8), 0);
     lv_label_set_text(s_soil_lbl, "");
     lv_obj_align(s_soil_lbl, LV_ALIGN_CENTER, 34, 62);
     lv_obj_add_flag(s_soil_lbl, LV_OBJ_FLAG_HIDDEN);

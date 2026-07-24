@@ -9,6 +9,7 @@
  * pantalla redonda se manejan mejor que cualquier teclado.
  */
 #include "tool.h"
+#include "ui_theme.h"
 #include "alarm_clock.h"
 
 #include <stdio.h>
@@ -142,11 +143,7 @@ static void alarm_open(lv_obj_t *parent)
 {
     build_options();
 
-    lv_obj_t *title = lv_label_create(parent);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x8FA8C8), 0);
-    lv_label_set_text(title, "Alarmas");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 18);
+    ui_title(parent, "Alarmas");
 
     lv_obj_t *list = lv_obj_create(parent);
     lv_obj_remove_style_all(list);

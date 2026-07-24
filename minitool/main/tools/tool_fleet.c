@@ -5,6 +5,7 @@
  * rojo=offline, gris="sin señal" (sin mensajes recientes). Solo lectura.
  */
 #include "tool.h"
+#include "ui_theme.h"
 #include "fleet_service.h"
 
 #include <stdio.h>
@@ -26,7 +27,7 @@ static void add_row(const char *id, bool online, uint32_t age, const char *ip)
 
     const char *state; const char *color;
     if (age >= STALE_S)   { state = "sin senal"; color = "7F8C8D"; }
-    else if (online)      { state = "online";    color = "2ECC71"; }
+    else if (online)      { state = "online";    color = "35D07F"; }
     else                  { state = "offline";   color = "E74C3C"; }
 
     /* Segunda línea con la IP (si el nodo la publica): es la que se usa para
@@ -84,11 +85,7 @@ static void poll_cb(lv_timer_t *t)
 
 static void fleet_open(lv_obj_t *parent)
 {
-    lv_obj_t *title = lv_label_create(parent);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x8FA8C8), 0);
-    lv_label_set_text(title, "Nodos");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 22);
+    ui_title(parent, "Nodos");
 
     s_cont = lv_obj_create(parent);
     lv_obj_remove_style_all(s_cont);

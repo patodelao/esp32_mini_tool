@@ -68,7 +68,7 @@ static void gyro_open(lv_obj_t *parent)
     if (!qmi8658_available()) {
         lv_obj_t *msg = lv_label_create(parent);
         lv_label_set_text(msg, "IMU no detectado");
-        lv_obj_set_style_text_color(msg, lv_color_hex(0xFF5A5A), 0);
+        lv_obj_set_style_text_color(msg, lv_color_hex(0xE74C3C), 0);
         lv_obj_center(msg);
         return;
     }

@@ -7,6 +7,7 @@ idf_component_register(SRCS "ui_menu.c" "main.c"
                            
                             "ui_textinput.c"
                             "ui_watchface.c"
+                            "ui_theme.c"
                             "ui_notify.c"
                             "ui_power.c"
                             "ui_quick.c"

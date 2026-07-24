@@ -78,7 +78,7 @@ static const char *level_symbol(notify_level_t lv)
 static lv_color_t level_color(notify_level_t lv)
 {
     switch (lv) {
-        case NOTIFY_SUCCESS: return lv_color_hex(0x2ECC71);
+        case NOTIFY_SUCCESS: return lv_color_hex(0x35D07F);
         case NOTIFY_WARNING: return lv_color_hex(0xF1C40F);
         case NOTIFY_ALERT:   return lv_color_hex(0xE74C3C);
         case NOTIFY_INFO:

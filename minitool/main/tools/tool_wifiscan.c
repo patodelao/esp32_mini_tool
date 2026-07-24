@@ -84,7 +84,7 @@ static void rescan_cb(lv_event_t *e)
 static void wifiscan_open(lv_obj_t *parent)
 {
     s_status = lv_label_create(parent);
-    lv_obj_set_style_text_color(s_status, lv_color_hex(0x8899AA), 0);
+    lv_obj_set_style_text_color(s_status, lv_color_hex(0x8FA8C8), 0);
     lv_obj_align(s_status, LV_ALIGN_TOP_MID, 0, 46);
 
     s_list = lv_list_create(parent);

@@ -36,8 +36,7 @@ Sin botones físicos, todo es táctil. Vale la pena tener esto a mano:
 
 | Gesto | Dónde | Qué hace |
 |---|---|---|
-| Tocar el **ícono** de la fila central | Menú | Abre esa herramienta |
-| Arrastrar la barra inferior | Menú | Salta a esa posición de la lista |
+| Tocar una tarjeta | Menú | Abre esa herramienta |
 | Deslizar a la **derecha** | En una tool | Vuelve al menú (o a Config, si se abrió desde ahí) |
 | Deslizar **abajo** | Carátula | Abre el **panel rápido** (silencio, linterna, BT, brillo) |
 | Deslizar **arriba** | Panel rápido | Lo cierra |
@@ -68,6 +67,17 @@ herramientas son solo vistas.
 | `ui_notify` | Toasts + historial persistido de las últimas 20 notificaciones |
 | `ui_power` | Apagado de pantalla, despertar por movimiento, brillo y modo noche |
 | `ui_quick` | Panel rápido de la carátula |
+
+### Estética
+
+`ui_theme.h` define **una vez** cada rol de color (`UI_OK`, `UI_ALERT`,
+`UI_CARD`, `UI_TITLE`…) y las piezas repetidas (título de tool, tarjeta,
+píldora). Los nombres son semánticos a propósito: si mañana cambia el verde,
+cambia en un solo lugar y nada queda a medio camino.
+
+El menú y la tool Config comparten el mismo lenguaje: lista de píldoras con el
+ícono en un chip de color, curvada siguiendo el borde circular y con snap al
+centro.
 
 ### Herramientas
 

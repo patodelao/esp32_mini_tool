@@ -62,7 +62,7 @@ static void render_plant(void) {
     snprintf(buf, sizeof(buf), LV_SYMBOL_TINT "  %s %%%s", val, stale ? "  (viejo)" : "");
     lv_label_set_text(s_plant_label, buf);
 
-    lv_color_t c = lv_color_hex(0x2ECC71);                 /* normal: verde */
+    lv_color_t c = lv_color_hex(0x35D07F);                 /* normal: verde */
     if (stale)                              c = lv_color_hex(0x7F8C8D);
     else if (st == SENSOR_ALERT_LOW)        c = lv_color_hex(0xE74C3C);  /* hay que regar */
     else if (st == SENSOR_ALERT_HIGH)       c = lv_color_hex(0xE0A030);  /* encharcada */
@@ -88,7 +88,7 @@ static void render(void) {
         lv_obj_set_style_text_color(s_status_label, lv_color_hex(0xE74C3C), 0);
     } else {
         lv_label_set_text(s_icon_label, LV_SYMBOL_OK);
-        lv_obj_set_style_text_color(s_icon_label, lv_color_hex(0x2ECC71), 0);
+        lv_obj_set_style_text_color(s_icon_label, lv_color_hex(0x35D07F), 0);
         lv_label_set_text(s_status_label, "Puerta Cerrada");
         lv_obj_set_style_text_color(s_status_label, lv_color_white(), 0);
     }
