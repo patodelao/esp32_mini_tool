@@ -86,9 +86,11 @@ nodo ya publicó el suyo.
 Cada nodo publica además su `status` (con last-will) y su `ip`, que la tool
 **Nodos** muestra para poder actualizarlo.
 
-El minitool sirve también un **panel web** en `http://<ip>/`: los mismos
-sensores, nodos y alertas que muestra en pantalla, pero en el navegador del
-teléfono, donde entran todos juntos y sin tenerlo en la mano.
+El minitool sirve también un **panel web** en `http://<ip>/`: una tarjeta por
+sensor con su valor, la curva de las últimas 24 h y el récord del día,
+agrupadas por nodo, más los nodos, las alertas y el registro. Todo en el
+navegador del teléfono, sin tener el reloj en la mano. Los gráficos son SVG
+generado en el propio ESP32, sin librerías ni JavaScript.
 
 Además guarda en su flash una foto de todos los sensores cada media hora y la
 entrega en `http://<ip>/csv` — entre 3 y 6 semanas de historia para abrir en

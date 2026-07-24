@@ -218,10 +218,26 @@ la tool **Red**, y también la publica en `labo/nodo/minitool/ip`.
 
 ### Ver el home-lab desde el teléfono
 
-`http://<ip>/` devuelve una página con los sensores (con el mismo color de
-estado que en pantalla), los nodos con su IP y las últimas alertas. Se refresca
-sola cada 15 s. La pantalla del reloj mide 240×240 y hay que tenerlo en la
-mano; en el navegador entra todo junto.
+`http://<ip>/` devuelve un panel con **una tarjeta por sensor**: nombre, valor
+grande con el mismo color de estado que en pantalla, la **curva de las últimas
+24 h** y el récord del día. Debajo, los nodos con su IP, las últimas alertas y
+el estado del registro. Se refresca solo cada 30 s. La pantalla del reloj mide
+240×240 y hay que tenerlo en la mano; en el navegador entra todo junto.
+
+Las tarjetas van **agrupadas por nodo**, que es como uno los piensa: la
+pregunta es "¿cómo está la pieza?", no "¿cómo está `pieza/temp`?". Con 13
+sensores de tres equipos, una lista corrida no se lee.
+
+Las curvas son **SVG generado en el ESP32**, sin librerías ni JavaScript: una
+polilínea escalada al alto de la caja. Los datos salen de la historia horaria
+que `sensor_service` ya guarda en NVS — no del CSV de la flash, que son
+cientos de kB y parsearlos por cada visita tardaría una eternidad. Una serie
+plana (el suelo que no se movió en todo el día) recibe aire artificial para no
+dividir por cero ni quedar pegada al borde.
+
+Un número solo no dice nada: 18.9 °C puede ser una pieza estable o una que
+viene cayendo hace seis horas, y son cosas distintas. La curva contesta eso de
+un vistazo.
 
 ### Actualizar sin cable
 

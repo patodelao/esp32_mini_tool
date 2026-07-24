@@ -77,6 +77,52 @@ static const char *state_color(const char *id, uint32_t age)
     }
 }
 
+/* ------------------------------ Gráficos SVG ------------------------------
+ *
+ * El panel mostraba un número por sensor. Un número solo no dice nada: 18.9 °C
+ * puede ser una pieza estable o una que viene cayendo hace seis horas, y son
+ * cosas distintas. La curva de las últimas 24 h contesta eso de un vistazo.
+ *
+ * Se dibuja en SVG generado acá mismo, sin librerías ni JavaScript: una
+ * polilínea escalada al alto de la caja. Los datos salen de la historia horaria
+ * que sensor_service ya mantiene en NVS, así que no hay que leer ni parsear el
+ * CSV de la flash — que son cientos de kB y tardaría una eternidad.
+ */
+#define SPARK_W 300
+#define SPARK_H  56
+
+/* Devuelve false si no hay suficientes puntos para una curva. */
+static bool sparkline(httpd_req_t *req, int idx, const char *color)
+{
+    float h[SENSOR_HIST_H];
+    int hn = sensor_history_hourly(idx, h, SENSOR_HIST_H);
+    if (hn < 2) return false;
+
+    float mn = h[0], mx = h[0];
+    for (int i = 1; i < hn; i++) {
+        if (h[i] < mn) mn = h[i];
+        if (h[i] > mx) mx = h[i];
+    }
+    /* Una serie plana (el suelo que no se movió en todo el día) dividiría por
+     * cero y además quedaría pegada al borde; se le da aire artificial. */
+    float span = mx - mn;
+    if (span < 0.001f) { mn -= 1.0f; mx += 1.0f; span = mx - mn; }
+
+    sendf(req, "<svg class='sp' viewBox='0 0 %d %d' preserveAspectRatio='none'>"
+               "<polyline fill='none' stroke='%s' stroke-width='2' "
+               "stroke-linejoin='round' points='", SPARK_W, SPARK_H, color);
+
+    /* Los puntos se mandan de a poco: 24 pares no entran en el buffer de
+     * sendf() y armar el string entero en la pila no vale la pena. */
+    for (int i = 0; i < hn; i++) {
+        int x = (hn == 1) ? 0 : (i * (SPARK_W - 4)) / (hn - 1) + 2;
+        int y = SPARK_H - 4 - (int)(((h[i] - mn) / span) * (SPARK_H - 8));
+        sendf(req, "%d,%d ", x, y);
+    }
+    send(req, "'/></svg>");
+    return true;
+}
+
 /* --------------------------------- Página --------------------------------- */
 
 static esp_err_t root_get(httpd_req_t *req)
@@ -86,33 +132,85 @@ static esp_err_t root_get(httpd_req_t *req)
     send(req,
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<meta http-equiv='refresh' content='15'>"   /* se refresca solo */
+        "<meta http-equiv='refresh' content='30'>"   /* se refresca solo */
         "<title>Home-lab</title><style>"
         "body{background:#0A0E12;color:#DDE6F0;font-family:system-ui,sans-serif;margin:0;padding:16px}"
-        "h2{color:#8FA8C8;font-size:15px;font-weight:600;margin:22px 0 8px;"
+        "h2{color:#8FA8C8;font-size:15px;font-weight:600;margin:24px 0 10px;"
         "text-transform:uppercase;letter-spacing:.08em}"
+        "h3{color:#5A6B7A;font-size:12px;font-weight:600;margin:18px 0 8px;"
+        "text-transform:uppercase;letter-spacing:.1em}"
         "table{width:100%;border-collapse:collapse}"
         "td{padding:9px 4px;border-bottom:1px solid #1A2733}"
         "td.v{text-align:right;font-variant-numeric:tabular-nums}"
         ".muted{color:#7F8C8D;font-size:13px}"
         ".ok{color:#35D07F}.off{color:#E74C3C}"
         "a{color:#35D07F}"
+        /* Tarjeta por sensor: nombre arriba, valor grande, curva abajo. */
+        ".g{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}"
+        ".c{background:#141C24;border:1px solid #1A2733;border-radius:12px;padding:12px 14px}"
+        ".c .n{color:#8FA8C8;font-size:13px}"
+        ".c .b{font-size:26px;font-variant-numeric:tabular-nums;margin:2px 0 6px}"
+        ".c .u{font-size:14px;color:#7F8C8D;margin-left:3px}"
+        ".sp{width:100%;height:56px;display:block}"
+        ".f{display:flex;justify-content:space-between;font-size:12px;color:#5A6B7A;margin-top:4px}"
         "</style></head><body>");
 
-    /* --- Sensores --- */
-    send(req, "<h2>Sensores</h2><table>");
+    /* --- Sensores, agrupados por nodo ---
+     *
+     * Con 13 sensores de tres equipos una lista corrida no se lee. Agrupar por
+     * nodo es como uno los piensa: "¿cómo está la pieza?", no "¿cómo está
+     * pieza/temp?". */
+    send(req, "<h2>Sensores</h2>");
+
     int n = sensor_count();
+    if (n == 0) send(req, "<p class='muted'>sin sensores</p>");
+
+    char done[8][24];        /* nodos ya impresos */
+    int done_n = 0;
+
     for (int i = 0; i < n; i++) {
-        char id[SENSOR_ID_MAX], val[16], name[40];
+        char id[SENSOR_ID_MAX], val[16];
         uint32_t age = 0;
         if (!sensor_get(i, id, sizeof(id), val, sizeof(val), &age)) continue;
-        sensor_friendly_name(id, name, sizeof(name));
-        sendf(req, "<tr><td>%s</td><td class='v' style='color:%s'>%s %s</td>"
-                   "<td class='v muted'>%us</td></tr>",
-              name, state_color(id, age), val, sensor_unit(id), (unsigned)age);
+
+        char node[24];
+        sensor_node_id(id, node, sizeof(node));
+
+        bool seen = false;
+        for (int d = 0; d < done_n; d++) if (strcmp(done[d], node) == 0) seen = true;
+        if (seen) continue;
+        if (done_n < (int)(sizeof(done) / sizeof(done[0]))) strlcpy(done[done_n++], node, 24);
+
+        sendf(req, "<h3>%s</h3><div class='g'>", sensor_node_label(node));
+
+        /* Segunda pasada: todos los sensores de ESTE nodo. */
+        for (int j = 0; j < n; j++) {
+            char jid[SENSOR_ID_MAX], jval[16], jname[40], jnode[24];
+            uint32_t jage = 0;
+            if (!sensor_get(j, jid, sizeof(jid), jval, sizeof(jval), &jage)) continue;
+            sensor_node_id(jid, jnode, sizeof(jnode));
+            if (strcmp(jnode, node) != 0) continue;
+
+            sensor_friendly_name(jid, jname, sizeof(jname));
+            const char *color = state_color(jid, jage);
+
+            sendf(req, "<div class='c'><div class='n'>%s</div>"
+                       "<div class='b' style='color:%s'>%s<span class='u'>%s</span></div>",
+                  jname, color, jval, sensor_unit(jid));
+
+            if (!sparkline(req, j, color))
+                send(req, "<div class='muted' style='height:56px'>sin historia todavia</div>");
+
+            /* Pie de la tarjeta: récord del día y antigüedad del dato. */
+            float rmn = 0, rmx = 0; bool rvalid = false;
+            sensor_get_record(j, &rmn, &rmx, &rvalid);
+            send(req, "<div class='f'><span>");
+            if (rvalid) sendf(req, "hoy %.1f / %.1f", rmn, rmx);
+            else        send(req, "24 h");
+            sendf(req, "</span><span>hace %us</span></div></div>", (unsigned)jage);
+        }
+        send(req, "</div>");
     }
-    if (n == 0) send(req, "<tr><td class='muted'>sin sensores</td></tr>");
-    send(req, "</table>");
 
     /* --- Nodos --- */
     send(req, "<h2>Nodos</h2><table>");
