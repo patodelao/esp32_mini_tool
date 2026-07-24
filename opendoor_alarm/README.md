@@ -102,6 +102,11 @@ falta servidor externo ni nube: se sube desde la misma PC donde compilás.
 curl -X POST --data-binary @build/opendoor_alarm.bin "http://<ip>/update?key=<OTA_PASSWORD>"
 ```
 
+Probado de punta a punta: 950 kB en **7.8 s**, con el nodo pasando de la ranura
+`ota_0` a la `ota_1`. La página de estado dice en cuál está corriendo y con qué
+versión (el hash del commit), así que siempre se puede confirmar qué firmware
+tiene puesto.
+
 La IP se ve en la tool **Nodos** del minitool (el nodo la publica retenida), o
 entrando con el navegador a `http://<ip>/`, que muestra una página con la
 ranura activa y el tiempo encendido.

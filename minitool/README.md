@@ -1,100 +1,130 @@
-| Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-C6 | ESP32-H2 | ESP32-P4 | ESP32-S2 | ESP32-S3 |
-| ----------------- | ----- | -------- | -------- | -------- | -------- | -------- | -------- | -------- |
+# minitool
 
-# SPI LCD and Touch Panel Example
+Reloj-herramienta sobre **Waveshare ESP32-S3-Touch-LCD-1.28**: pantalla redonda
+de 240×240 táctil, IMU de 6 ejes y Wi-Fi/BLE. Hace de **consola del home-lab**
+(sensores, nodos, alertas, control) y de reloj con las funciones que se esperan
+de uno: notificaciones del teléfono, podómetro, pantalla que se apaga y
+despierta al moverlo.
 
-[esp_lcd](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/lcd.html) provides several panel drivers out-of box, e.g. ST7789, SSD1306, NT35510. However, there're a lot of other panels on the market, it's beyond `esp_lcd` component's responsibility to include them all.
+> Este README reemplaza al del ejemplo `spi_lcd_touch` de Espressif, que venía
+> de plantilla y describía un cableado que no corresponde a esta placa (acá el
+> panel y el táctil vienen integrados).
 
-`esp_lcd` allows user to add their own panel drivers in the project scope (i.e. panel driver can live outside of esp-idf), so that the upper layer code like LVGL porting code can be reused without any modifications, as long as user-implemented panel driver follows the interface defined in the `esp_lcd` component.
+## Compilar y flashear
 
-This example shows how to use GC9A01 or ILI9341 display driver from Component manager in esp-idf project. These components are using API provided by `esp_lcd` component. This example will draw a fancy dash board with the LVGL library.
-
-This example uses the [esp_timer](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/esp_timer.html) to generate the ticks needed by LVGL and uses a dedicated task to run the `lv_timer_handler()`. Since the LVGL APIs are not thread-safe, this example uses a mutex which be invoked before the call of `lv_timer_handler()` and released after it. The same mutex needs to be used in other tasks and threads around every LVGL (lv_...) related function call and code. For more porting guides, please refer to [LVGL porting doc](https://docs.lvgl.io/master/porting/index.html).
-
-## Touch controller STMPE610
-
-In this example you can enable touch controller STMPE610 connected via SPI. The SPI connection is shared with LCD screen.
-
-## How to use the example
-
-### Hardware Required
-
-* An ESP development board
-* An GC9A01 or ILI9341 LCD panel, with SPI interface (with/without STMPE610 SPI touch)
-* An USB cable for power supply and programming
-
-### Hardware Connection
-
-The connection between ESP Board and the LCD is as follows:
-
-```
-       ESP Board                       GC9A01/ILI9341 Panel + TOUCH
-┌──────────────────────┐              ┌────────────────────┐
-│             GND      ├─────────────►│ GND                │
-│                      │              │                    │
-│             3V3      ├─────────────►│ VCC                │
-│                      │              │                    │
-│             PCLK     ├─────────────►│ SCL                │
-│                      │              │                    │
-│             MOSI     ├─────────────►│ MOSI               │
-│                      │              │                    │
-│             MISO     |◄─────────────┤ MISO               │
-│                      │              │                    │
-│             RST      ├─────────────►│ RES                │
-│                      │              │                    │
-│             DC       ├─────────────►│ DC                 │
-│                      │              │                    │
-│             LCD CS   ├─────────────►│ LCD CS             │
-│                      │              │                    │
-│             TOUCH CS ├─────────────►│ TOUCH CS           │
-│                      │              │                    │
-│             BK_LIGHT ├─────────────►│ BLK                │
-└──────────────────────┘              └────────────────────┘
-```
-
-The GPIO number used by this example can be changed in [lvgl_example_main.c](main/spi_lcd_touch_example_main.c).
-Especially, please pay attention to the level used to turn on the LCD backlight, some LCD module needs a low level to turn it on, while others take a high level. You can change the backlight level macro `EXAMPLE_LCD_BK_LIGHT_ON_LEVEL` in [lvgl_example_main.c](main/spi_lcd_touch_example_main.c).
-
-### Build and Flash
-
-Run `idf.py -p PORT build flash monitor` to build, flash and monitor the project. A fancy animation will show up on the LCD as expected.
-
-The first time you run `idf.py` for the example will cost extra time as the build system needs to address the component dependencies and downloads the missing components from registry into `managed_components` folder.
-
-(To exit the serial monitor, type ``Ctrl-]``.)
-
-See the [Getting Started Guide](https://docs.espressif.com/projects/esp-idf/en/latest/get-started/index.html) for full steps to configure and use ESP-IDF to build projects.
-
-### Example Output
+ESP-IDF **v5.3.2**, target `esp32s3`. Desde PowerShell hay que fijar el
+entorno a mano porque `export.ps1` toma un Python equivocado:
 
 ```bash
-...
-I (409) cpu_start: Starting scheduler on APP CPU.
-I (419) example: Turn off LCD backlight
-I (419) gpio: GPIO[2]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0
-I (429) example: Initialize SPI bus
-I (439) example: Install panel IO
-I (439) gpio: GPIO[5]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0
-I (449) example: Install GC9A01 panel driver
-I (459) gpio: GPIO[3]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0
-I (589) gpio: GPIO[0]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0
-I (589) example: Initialize touch controller STMPE610
-I (589) STMPE610: TouchPad ID: 0x0811
-I (589) STMPE610: TouchPad Ver: 0x03
-I (599) example: Turn on LCD backlight
-I (599) example: Initialize LVGL library
-I (609) example: Register display driver to LVGL
-I (619) example: Install LVGL tick timer
-I (619) example: Starting LVGL task
-I (619) example: Display LVGL animation
-I (619) example: Display LVGL Meter Widget
-...
+$env:IDF_TOOLS_PATH="C:/Users/alons/Espressif"; $env:PATH="C:/Users/alons/Espressif/python_env/idf5.3_py3.11_env/Scripts;" + $env:PATH; . "C:/Users/alons/esp/v5.3.2/esp-idf/export.ps1"
 ```
 
+```bash
+idf.py -p COM<x> flash monitor
+```
 
-## Troubleshooting
+> ⚠️ **No usar `erase-flash`.** La NVS guarda credenciales Wi-Fi, umbrales de
+> sensores, récord del día, historial de alertas, pasos y ajustes de pantalla.
+> Un `flash` normal no la toca.
 
-* Why the LCD doesn't light up?
-  * Check the backlight's turn-on level, and update it in `EXAMPLE_LCD_BK_LIGHT_ON_LEVEL`
+En un checkout nuevo, antes del primer build: `idf.py set-target esp32s3`
+(`sdkconfig.defaults` no fija el target y el default no entra en memoria).
 
-For any technical queries, please open an [issue] (https://github.com/espressif/esp-idf/issues) on GitHub. We will get back to you soon.
+## Cómo se navega
+
+Sin botones físicos, todo es táctil. Vale la pena tener esto a mano:
+
+| Gesto | Dónde | Qué hace |
+|---|---|---|
+| Tocar el **ícono** de la fila central | Menú | Abre esa herramienta |
+| Arrastrar la barra inferior | Menú | Salta a esa posición de la lista |
+| Deslizar a la **derecha** | En una tool | Vuelve al menú (o a Config, si se abrió desde ahí) |
+| Deslizar **abajo** | Carátula | Abre el **panel rápido** (silencio, linterna, BT, brillo) |
+| Deslizar **arriba** | Panel rápido | Lo cierra |
+| Tocar la pantalla | Carátula | Vuelve al menú |
+| Tocar el gráfico | Sensores (detalle) | Alterna histórico reciente / 24 h |
+| Pulsación **larga** en la papelera | Sensores (detalle) | Olvida el sensor (pide confirmar con una X) |
+
+## Arquitectura
+
+Dos capas, y la separación importa: **los servicios corren siempre**, las
+herramientas son solo vistas.
+
+### Servicios (segundo plano)
+
+| Módulo | Qué hace |
+|---|---|
+| `mqtt_hub` | Un solo cliente MQTT compartido. Los subsistemas se enganchan con un filtro de topic y un callback |
+| `sensor_service` | Lecturas de `labo/sensor/#`: último valor, histórico corto, promedio horario de 24 h y récord del día (todo persistido) |
+| `sensor_alert` | Umbrales por sensor con histéresis, anti-rebote y aviso de sensor mudo. Ver abajo |
+| `fleet_service` | Nodos vistos en `labo/nodo/+/status` y sus IPs |
+| `self_node` | El propio reloj publicándose como un nodo más (estado, IP, rssi/heap/uptime) |
+| `alert_service` | Bus de alertas `labo/alerta/#` → notificaciones, y estado de la puerta del refri |
+| `weather_service` | Clima con caché. Prefiere el que manda el teléfono; solo descarga de internet si no hay |
+| `pedometer_service` | Pasos del día por acelerómetro, con historial de 7 días y meta |
+| `ble_notify` | Notificaciones del teléfono por BLE (Gadgetbridge), y control de música / buscar teléfono |
+| `ui_notify` | Toasts + historial persistido de las últimas 20 notificaciones |
+| `ui_power` | Apagado de pantalla, despertar por movimiento, brillo y modo noche |
+| `ui_quick` | Panel rápido de la carátula |
+
+### Herramientas
+
+Cada una es un `const tool_t` en `main/tools/` con `open`/`close`, registrado
+en `tools.c`. Para agregar una: implementar el `.c`, declararla `extern` en
+`tools.c` y sumarla al array.
+
+El flag `.hidden` la saca del menú principal: así las de comunicaciones
+(Wi-Fi, Redes, Info de red, QR WiFi, Bluetooth) viven dentro de **Config** sin
+duplicar código, y se abren con `ui_menu_open_tool()`.
+
+## Sensores y alertas
+
+La tool **Sensores** abre en una lista con todos (hoy 13, entre la pieza, el
+refri y el propio reloj) y al tocar uno se ve su detalle: valor, récord del
+día, gráfico e histórico de 24 h.
+
+El motor de umbrales (`sensor_alert.c`) da, por sensor:
+
+- **banda min/max** con cada límite activable por separado,
+- **histéresis** para volver a normal sin que el aviso parpadee,
+- **anti-rebote**: dos lecturas seguidas fuera de rango antes de avisar, para
+  que un pico del ADC no dispare nada,
+- **recordatorio** cada 30 min mientras siga fuera,
+- **aviso de sensor mudo**, con el límite derivado del intervalo de muestreo, y
+  agrupado **por nodo**: si se cae el nodo de la pieza no salen 6 avisos, sale
+  uno. Y no se avisa de un nodo que se declaró offline, porque eso es que está
+  apagado, no que falle.
+
+Los valores por defecto salen de la magnitud (`suelo`, `temp`, `rssi`…) y se
+editan desde el engranaje, que además publica la config al nodo cuando
+corresponde. Ver [README raíz](../README.md) para la convención de topics.
+
+## Teléfono (Gadgetbridge)
+
+El reloj se anuncia por BLE como **"Bangle.js mini"** —el prefijo es lo que lo
+hace reconocible— y habla el protocolo de Bangle.js sobre Nordic UART:
+
+- **recibe** notificaciones, llamadas, la hora y el clima;
+- **envía** control de música y "encontrar mi teléfono" (tool **Teléfono**).
+
+Requiere [Gadgetbridge](https://f-droid.org/packages/nodomain.freeyourgadget.gadgetbridge/)
+desde F-Droid (no está en Play Store). En Xiaomi/MIUI hay que darle
+**autoinicio** y **batería sin restricciones**, o deja de reenviar a los pocos
+minutos.
+
+## Pantalla y energía
+
+- Se apaga sola tras el tiempo configurado (45 s por defecto).
+- Despierta al **tocarla**, al **moverla** o cuando entra una notificación. El
+  movimiento se mide contra una línea base del reposo, no contra cero: el
+  giroscopio quieto marca su propio sesgo, y restarlo permite umbrales mucho
+  más chicos sin despertares falsos.
+- **Modo noche**: en la franja configurada las notificaciones van solo al
+  historial y la pantalla enciende al 15 %. Las críticas pasan igual.
+- La linterna y la alarma del temporizador **inhiben** el apagado: son cosas
+  que se miran sin tocar la pantalla.
+
+## Particiones
+
+`partitions.csv`: 3 MB de app + 1 MB de SPIFFS sobre 16 MB de flash. Quedan
+~12 MB sin particionar, disponibles si algún día hace falta.

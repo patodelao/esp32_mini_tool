@@ -8,9 +8,13 @@ servidor propio: los nodos publican, el minitool muestra y configura.
 
 | Carpeta | Qué es | Toolchain |
 |---|---|---|
-| [`minitool/`](minitool) | ESP32-S3 con pantalla redonda 240×240 táctil. La consola: menú de herramientas (sensores, nodos, control, clima, reloj, podómetro…). | ESP-IDF v5.3.2, LVGL 8 |
-| [`esp8266_sensor/`](esp8266_sensor) | Nodo sensor: aire (DHT22) + suelo (HW-103), con riego vigilado y actualización OTA. | PlatformIO + Arduino |
-| [`opendoor_alarm/`](opendoor_alarm) | Alarma de puerta abierta del refrigerador. | ESP-IDF |
+| [`minitool/`](minitool) | ESP32-S3 con pantalla redonda 240×240 táctil. La consola del home-lab y reloj: sensores, nodos, alertas, control, notificaciones del teléfono. | ESP-IDF v5.3.2, LVGL 8 |
+| [`esp8266_sensor/`](esp8266_sensor) | Nodo `pieza`: aire (DHT22) + suelo (HW-103), con riego vigilado y actualización OTA. | PlatformIO + Arduino |
+| [`opendoor_alarm/`](opendoor_alarm) | Nodo `refri`: alarma de puerta abierta, con actualización OTA. | ESP-IDF |
+
+**Los tres se actualizan por Wi-Fi.** El de la pieza con ArduinoOTA, el del
+refri con un POST HTTP, y el minitool por USB porque es el que tenés en la
+mano. Ninguno necesita cable salvo el primer flasheo.
 
 > ⚠️ Son **tres toolchains distintas**. La extensión ESP-IDF de VS Code no
 > compila el ESP8266, y PlatformIO no compila los proyectos ESP-IDF.
@@ -66,6 +70,23 @@ nodo ya publicó el suyo.
 
 - Armar o replicar un nodo sensor: [`esp8266_sensor/README.md`](esp8266_sensor/README.md)
   — conexionado, calibración, OTA y checklist de instalación.
-- Compilar el minitool: ESP-IDF v5.3.2, target `esp32s3`. En un checkout nuevo,
-  correr `idf.py set-target esp32s3` **antes** del primer `idf.py build`
-  (`sdkconfig.defaults` no fija el target y el default no entra en memoria).
+- Entender o modificar el reloj: [`minitool/README.md`](minitool/README.md) —
+  arquitectura (servicios vs. herramientas), cómo agregar una tool, el mapa de
+  gestos y los detalles de compilación.
+- El nodo del refri: [`opendoor_alarm/README.md`](opendoor_alarm/README.md).
+
+## Qué hay funcionando hoy
+
+| Nodo | Publica | Actualización |
+|---|---|---|
+| `pieza` | temp, hum, suelo, rssi, uptime, heap | OTA (ArduinoOTA) |
+| `refri` | puerta, abierta_seg, rssi, uptime, heap | OTA (`curl` a `http://<ip>/update`) |
+| `minitool` | rssi, uptime, heap | USB |
+
+Cada nodo publica además su `status` (con last-will) y su `ip`, que la tool
+**Nodos** muestra para poder actualizarlo.
+
+La telemetría de salud sale por los topics de sensores a propósito: así hereda
+gratis el gráfico, el récord del día, el histórico de 24 h y los umbrales. El
+reloj se avisa a sí mismo si su Wi-Fi cae de −85 dBm o si su RAM libre baja de
+8 kB.
