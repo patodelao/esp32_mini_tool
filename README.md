@@ -90,6 +90,11 @@ El minitool sirve también un **panel web** en `http://<ip>/`: los mismos
 sensores, nodos y alertas que muestra en pantalla, pero en el navegador del
 teléfono, donde entran todos juntos y sin tenerlo en la mano.
 
+Además guarda en su flash una foto de todos los sensores cada media hora y la
+entrega en `http://<ip>/csv` — entre 3 y 6 semanas de historia para abrir en
+una planilla. Es la única memoria larga del sistema: los nodos publican y
+olvidan.
+
 La telemetría de salud sale por los topics de sensores a propósito: así hereda
 gratis el gráfico, el récord del día, el histórico de 24 h y los umbrales. El
 reloj se avisa a sí mismo si su Wi-Fi cae de −85 dBm o si su RAM libre baja de

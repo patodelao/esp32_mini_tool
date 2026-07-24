@@ -16,6 +16,7 @@
 #include "fleet_service.h"
 #include "ui_notify.h"
 #include "ui_theme.h"
+#include "datalog.h"
 
 #include "esp_http_server.h"
 #include "esp_ota_ops.h"
@@ -95,6 +96,7 @@ static esp_err_t root_get(httpd_req_t *req)
         "td.v{text-align:right;font-variant-numeric:tabular-nums}"
         ".muted{color:#7F8C8D;font-size:13px}"
         ".ok{color:#35D07F}.off{color:#E74C3C}"
+        "a{color:#35D07F}"
         "</style></head><body>");
 
     /* --- Sensores --- */
@@ -146,6 +148,19 @@ static esp_err_t root_get(httpd_req_t *req)
     if (an == 0) send(req, "<tr><td class='muted'>sin alertas</td></tr>");
     send(req, "</table>");
 
+    /* --- Registro histórico --- */
+    if (datalog_ready()) {
+        size_t kb = datalog_size() / 1024;
+        if (kb > 0) {
+            sendf(req, "<h2>Registro</h2><p class='muted'>%u kB guardados &middot; "
+                       "una foto cada 30 min &middot; <a href='/csv'>descargar CSV</a></p>",
+                  (unsigned)kb);
+        } else {
+            send(req, "<h2>Registro</h2><p class='muted'>todavia sin datos; "
+                      "la primera foto se guarda a la media hora en punto</p>");
+        }
+    }
+
     /* --- Pie: qué firmware corre y cómo actualizarlo --- */
     const esp_partition_t *run = esp_ota_get_running_partition();
     esp_app_desc_t desc;
@@ -159,6 +174,27 @@ static esp_err_t root_get(httpd_req_t *req)
 
     send(req, "</body></html>");
     httpd_resp_send_chunk(req, NULL, 0);   /* fin de la respuesta por trozos */
+    return ESP_OK;
+}
+
+/* ------------------------------ Registro CSV ------------------------------ */
+
+static bool csv_sink(void *ctx, const char *data, int len)
+{
+    /* Devolver false corta el volcado: el navegador cerró la descarga. */
+    return httpd_resp_send_chunk((httpd_req_t *)ctx, data, len) == ESP_OK;
+}
+
+static esp_err_t csv_get(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/csv; charset=utf-8");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=homelab.csv");
+
+    if (!datalog_dump(csv_sink, req)) {
+        httpd_resp_sendstr(req, "fecha,sensor,valor\n");   /* vacío, pero válido */
+        return ESP_OK;
+    }
+    httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
 }
 
@@ -253,8 +289,10 @@ esp_err_t web_ui_start(void)
     }
 
     static const httpd_uri_t root   = { .uri = "/",       .method = HTTP_GET,  .handler = root_get };
+    static const httpd_uri_t csv    = { .uri = "/csv",    .method = HTTP_GET,  .handler = csv_get };
     static const httpd_uri_t update = { .uri = "/update", .method = HTTP_POST, .handler = update_post };
     httpd_register_uri_handler(s_server, &root);
+    httpd_register_uri_handler(s_server, &csv);
     httpd_register_uri_handler(s_server, &update);
 
     ESP_LOGI(TAG, "Panel web listo en http://<ip>/");

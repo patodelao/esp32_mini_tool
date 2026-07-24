@@ -61,6 +61,7 @@ herramientas son solo vistas.
 | `self_node` | El propio reloj publicándose como un nodo más (estado, IP, rssi/heap/uptime) |
 | `alert_service` | Bus de alertas `labo/alerta/#` → notificaciones, y estado de la puerta del refri |
 | `web_ui` | Servidor HTTP: panel del home-lab para el navegador del teléfono y actualización del propio reloj por Wi-Fi. Ver abajo |
+| `datalog` | Registro histórico en SPIFFS: una foto de todos los sensores cada 30 min, descargable en CSV. Ver abajo |
 | `weather_service` | Clima con caché. Prefiere el que manda el teléfono; solo descarga de internet si no hay |
 | `pedometer_service` | Pasos del día por acelerómetro, con historial de 7 días y meta |
 | `alarm_clock` | Alarmas diarias. Suena con cualquier tool abierta y con la pantalla apagada |
@@ -174,6 +175,42 @@ Dos detalles que costaron un flasheo por cable descubrir en el nodo del refri y
 que acá ya vienen resueltos: el handler necesita **8 kB de stack** (los 4 kB por
 defecto se desbordan a mitad de la subida) y el buffer de recepción es
 **estático**, no de pila.
+
+## Registro histórico (CSV)
+
+Lo que faltaba: **memoria larga**. En NVS hay 24 h de promedios por hora y 7
+días de récords min/max, que alcanzan para mirar la pantalla pero no para
+responder *"¿cómo se secó la maceta el mes pasado?"* ni para llevarse los datos
+a una planilla.
+
+Cada media hora en punto, `datalog.c` escribe una foto de todos los sensores
+vivos en la partición `storage` (1 MB de SPIFFS que estaba declarada y sin
+usar). Se descarga desde el panel:
+
+```bash
+curl -O http://<ip>/csv
+```
+
+```
+fecha,sensor,valor
+2026-07-24 15:30,pieza/temp,18.9
+2026-07-24 15:30,pieza/suelo,74
+```
+
+- **Alineado al reloj**, no al arranque: las filas caen siempre en `:00` y
+  `:30`, así las series de días distintos se comparan sin interpolar.
+- **Los sensores mudos se saltan.** Repetir el último valor de un nodo caído
+  dibujaría una línea recta que nunca existió; mejor un hueco.
+- **No escribe nada hasta tener la hora.** Si no, el registro se llenaría de
+  filas fechadas en 1970.
+- **Rotación de dos archivos.** Cuando el actual pasa los 400 kB, el anterior se
+  borra, el actual pasa a ser el anterior y se empieza uno nuevo. Nunca se copia
+  ni se recorta nada: en 1 MB no hay lugar para duplicar el archivo mientras se
+  lo trabaja. Quedan siempre entre uno y dos límites de historia — con ~13
+  sensores, unas **3 a 6 semanas**.
+- Si la partición no monta, el módulo se desactiva solo y el resto sigue igual.
+  El montaje va en su propia tarea porque la primera vez SPIFFS **formatea**, y
+  eso son varios segundos que si no retrasarían el arranque.
 
 ## Particiones
 
