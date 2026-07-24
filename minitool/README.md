@@ -60,6 +60,7 @@ herramientas son solo vistas.
 | `fleet_service` | Nodos vistos en `labo/nodo/+/status` y sus IPs |
 | `self_node` | El propio reloj publicándose como un nodo más (estado, IP, rssi/heap/uptime) |
 | `alert_service` | Bus de alertas `labo/alerta/#` → notificaciones, y estado de la puerta del refri |
+| `web_ui` | Servidor HTTP: panel del home-lab para el navegador del teléfono y actualización del propio reloj por Wi-Fi. Ver abajo |
 | `weather_service` | Clima con caché. Prefiere el que manda el teléfono; solo descarga de internet si no hay |
 | `pedometer_service` | Pasos del día por acelerómetro, con historial de 7 días y meta |
 | `alarm_clock` | Alarmas diarias. Suena con cualquier tool abierta y con la pantalla apagada |
@@ -142,7 +143,48 @@ minutos.
 - La linterna y la alarma del temporizador **inhiben** el apagado: son cosas
   que se miran sin tocar la pantalla.
 
+## Panel web y actualización por Wi-Fi
+
+El reloj levanta un servidor HTTP (`web_ui.c`) apenas hay red. La IP la muestra
+la tool **Red**, y también la publica en `labo/nodo/minitool/ip`.
+
+### Ver el home-lab desde el teléfono
+
+`http://<ip>/` devuelve una página con los sensores (con el mismo color de
+estado que en pantalla), los nodos con su IP y las últimas alertas. Se refresca
+sola cada 15 s. La pantalla del reloj mide 240×240 y hay que tenerlo en la
+mano; en el navegador entra todo junto.
+
+### Actualizar sin cable
+
+```bash
+curl -X POST --data-binary @build/spi_lcd_touch.bin "http://<ip>/update?key=minitool-ota"
+```
+
+La clave está en `WEB_OTA_KEY` (`main/web_ui.c`). Va en la URL sobre HTTP
+plano: alcanza para que nadie de la red lo reflashee por accidente, no contra
+alguien que espíe el tráfico.
+
+El firmware se escribe en la ranura que **no** está corriendo y el arranque se
+cambia recién cuando `esp_ota_end()` valida el binario; una subida cortada no
+rompe nada, sigue arrancando el viejo. El pie de la página dice qué ranura y
+qué versión están corriendo.
+
+Dos detalles que costaron un flasheo por cable descubrir en el nodo del refri y
+que acá ya vienen resueltos: el handler necesita **8 kB de stack** (los 4 kB por
+defecto se desbordan a mitad de la subida) y el buffer de recepción es
+**estático**, no de pila.
+
 ## Particiones
 
-`partitions.csv`: 3 MB de app + 1 MB de SPIFFS sobre 16 MB de flash. Quedan
-~12 MB sin particionar, disponibles si algún día hace falta.
+`partitions.csv`: dos ranuras de app de 3 MB (`ota_0`/`ota_1`) + 1 MB de
+SPIFFS sobre 16 MB de flash. Las dos ranuras son lo que exige OTA. Quedan
+~8.6 MB sin particionar.
+
+La NVS conserva su offset y su tamaño a propósito: ahí viven las credenciales
+Wi-Fi, los umbrales, los récords, el historial de alertas y los pasos. Moverla
+equivaldría a borrarlos.
+
+> ⚠️ Pasar de la tabla vieja (una sola app) a ésta **cambia el mapa de la
+> flash**, así que ese flasheo puntual tiene que ser por cable. Los siguientes
+> ya van por Wi-Fi.

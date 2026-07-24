@@ -22,6 +22,7 @@
 #include "fleet_service.h"
 #include "sensor_service.h"
 #include "self_node.h"
+#include "web_ui.h"
 #include "weather_service.h"
 #include "pedometer_service.h"
 #include "alarm_clock.h"
@@ -146,6 +147,9 @@ void app_main(void)
 
     /* El propio minitool se publica como un nodo mas del home-lab. */
     self_node_init();
+
+    /* Panel web del home-lab y actualizacion por WiFi del propio reloj. */
+    web_ui_start();
 
     /* Servicio de clima con caché compartida (tool Clima + screensaver). */
     weather_service_init();

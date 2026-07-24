@@ -12,9 +12,9 @@ servidor propio: los nodos publican, el minitool muestra y configura.
 | [`esp8266_sensor/`](esp8266_sensor) | Nodo `pieza`: aire (DHT22) + suelo (HW-103), con riego vigilado y actualización OTA. | PlatformIO + Arduino |
 | [`opendoor_alarm/`](opendoor_alarm) | Nodo `refri`: alarma de puerta abierta, con actualización OTA. | ESP-IDF |
 
-**Los tres se actualizan por Wi-Fi.** El de la pieza con ArduinoOTA, el del
-refri con un POST HTTP, y el minitool por USB porque es el que tenés en la
-mano. Ninguno necesita cable salvo el primer flasheo.
+**Los tres se actualizan por Wi-Fi.** El de la pieza con ArduinoOTA; el del
+refri y el minitool con un POST HTTP a su propio servidor. Ninguno necesita
+cable salvo el primer flasheo (o un cambio en la tabla de particiones).
 
 > ⚠️ Son **tres toolchains distintas**. La extensión ESP-IDF de VS Code no
 > compila el ESP8266, y PlatformIO no compila los proyectos ESP-IDF.
@@ -81,10 +81,14 @@ nodo ya publicó el suyo.
 |---|---|---|
 | `pieza` | temp, hum, suelo, rssi, uptime, heap | OTA (ArduinoOTA) |
 | `refri` | puerta, abierta_seg, rssi, uptime, heap | OTA (`curl` a `http://<ip>/update`) |
-| `minitool` | rssi, uptime, heap | USB |
+| `minitool` | rssi, uptime, heap | OTA (`curl` a `http://<ip>/update`) |
 
 Cada nodo publica además su `status` (con last-will) y su `ip`, que la tool
 **Nodos** muestra para poder actualizarlo.
+
+El minitool sirve también un **panel web** en `http://<ip>/`: los mismos
+sensores, nodos y alertas que muestra en pantalla, pero en el navegador del
+teléfono, donde entran todos juntos y sin tenerlo en la mano.
 
 La telemetría de salud sale por los topics de sensores a propósito: así hereda
 gratis el gráfico, el récord del día, el histórico de 24 h y los umbrales. El
