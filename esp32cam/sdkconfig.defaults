@@ -1,0 +1,21 @@
+# Configuración base del nodo cámara (AI-Thinker ESP32-CAM = ESP32 clásico).
+#
+# sdkconfig está en .gitignore, así que todo lo que deba sobrevivir a un
+# checkout nuevo va acá. Fijar el target evita el clásico "idf.py build genera
+# sdkconfig para el default y el link falla".
+CONFIG_IDF_TARGET="esp32"
+
+# El AI-Thinker ESP32-CAM tiene 4 MB de flash.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# Tabla con dos ranuras de app, necesaria para actualizar por Wi-Fi.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# El firmware llega por POST en una sola conexión larga.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+
+# NOTA: la PSRAM del módulo NO se habilita todavía. En esta etapa (solo OTA) no
+# hace falta, y activarla mal es una fuente clásica de cuelgues de arranque. Se
+# prende cuando entre la cámara, que sí la necesita para los frame buffers.

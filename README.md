@@ -11,12 +11,15 @@ servidor propio: los nodos publican, el minitool muestra y configura.
 | [`minitool/`](minitool) | ESP32-S3 con pantalla redonda 240×240 táctil. La consola del home-lab y reloj: sensores, nodos, alertas, control, notificaciones del teléfono. | ESP-IDF v5.3.2, LVGL 8 |
 | [`esp8266_sensor/`](esp8266_sensor) | Nodo `pieza`: aire (DHT22) + suelo (HW-103), con riego vigilado y actualización OTA. | PlatformIO + Arduino |
 | [`opendoor_alarm/`](opendoor_alarm) | Nodo `refri`: alarma de puerta abierta, con actualización OTA. | ESP-IDF |
+| [`esp32cam/`](esp32cam) | Nodo `cam` (AI-Thinker ESP32-CAM). Por ahora solo base de red + OTA; la cámara viene después. | ESP-IDF v5.3.2 |
 
-**Los tres se actualizan por Wi-Fi.** El de la pieza con ArduinoOTA; el del
-refri y el minitool con un POST HTTP a su propio servidor. Ninguno necesita
-cable salvo el primer flasheo (o un cambio en la tabla de particiones).
+**Los cuatro se actualizan por Wi-Fi.** El de la pieza con ArduinoOTA; el
+refri, el minitool y la cámara con un POST HTTP a su propio servidor. Ninguno
+necesita cable salvo el primer flasheo (o un cambio en la tabla de
+particiones).
 
-> ⚠️ Son **tres toolchains distintas**. La extensión ESP-IDF de VS Code no
+> ⚠️ Son **tres toolchains distintas** (ESP-IDF para minitool/refri/cam,
+> PlatformIO+Arduino para el ESP8266). La extensión ESP-IDF de VS Code no
 > compila el ESP8266, y PlatformIO no compila los proyectos ESP-IDF.
 
 ## Cómo se hablan: convención de topics
@@ -74,6 +77,7 @@ nodo ya publicó el suyo.
   arquitectura (servicios vs. herramientas), cómo agregar una tool, el mapa de
   gestos y los detalles de compilación.
 - El nodo del refri: [`opendoor_alarm/README.md`](opendoor_alarm/README.md).
+- El nodo de la cámara: [`esp32cam/README.md`](esp32cam/README.md).
 
 ## Qué hay funcionando hoy
 
@@ -82,6 +86,7 @@ nodo ya publicó el suyo.
 | `pieza` | temp, hum, suelo, rssi, uptime, heap | OTA (ArduinoOTA) |
 | `refri` | puerta, abierta_seg, rssi, uptime, heap | OTA (`curl` a `http://<ip>/update`) |
 | `minitool` | rssi, uptime, heap | OTA (`curl` a `http://<ip>/update`) |
+| `cam` | rssi, uptime, heap | OTA (`curl` a `http://<ip>/update`) |
 
 Cada nodo publica además su `status` (con last-will) y su `ip`, que la tool
 **Nodos** muestra para poder actualizarlo.
