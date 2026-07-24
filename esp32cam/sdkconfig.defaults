@@ -16,6 +16,15 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # El firmware llega por POST en una sola conexión larga.
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 
-# NOTA: la PSRAM del módulo NO se habilita todavía. En esta etapa (solo OTA) no
-# hace falta, y activarla mal es una fuente clásica de cuelgues de arranque. Se
-# prende cuando entre la cámara, que sí la necesita para los frame buffers.
+# PSRAM: la cámara la necesita para los frame buffers en JPEG. El AI-Thinker la
+# trae (4 MB, QSPI). IGNORE_NOTFOUND es la red de seguridad: si por lo que sea
+# no monta, el arranque NO se aborta —camera_init() falla solito y el nodo
+# sigue vivo como nodo OTA— en vez de quedar en un cuelgue que obligaría a
+# volver al cable.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+
+# La cámara sube el binario: subimos el límite de tamaño de app en la ranura ya
+# está cubierto por la tabla (1.87 MB). Nada más que tocar acá.

@@ -1,20 +1,30 @@
 # esp32cam — nodo `cam` (AI-Thinker ESP32-CAM)
 
-El cuarto nodo del home-lab. **Esta primera etapa NO tiene cámara todavía**:
-es solo la base de red y —sobre todo— la **actualización por Wi-Fi**, para no
-tener que volver a flashear por cable.
+El cuarto nodo del home-lab: una cámara con foto por HTTP, integrada al mismo
+bus MQTT que los demás y **actualizable por Wi-Fi**.
 
-## Por qué se arranca por el OTA
+## La foto
+
+`http://<ip>/foto.jpg` devuelve una captura JPEG desde cualquier navegador de
+la red. Con PSRAM sale en SVGA (800×600); si por lo que sea no hay PSRAM, se
+degrada a QVGA en vez de fallar. El sensor entrega JPEG directo, así que el
+frame se manda tal cual, sin recomprimir.
+
+La cámara arranca al boot pero **no es crítica**: si falla (placa sin sensor,
+PSRAM que no monta), el nodo sigue vivo como nodo OTA y `/foto.jpg` responde
+503. Nunca un cuelgue de arranque que obligue a volver al cable.
+
+## Por qué el OTA es el corazón del proyecto
 
 El ESP32-CAM no tiene USB. Se flashea con un adaptador USB-TTL puenteando
-`GPIO0` a masa y apretando reset — un baile molesto que no conviene repetir. La
-idea de esta etapa es dejar ese baile hecho **una sola vez**: con este firmware
-base andando, el primer flasheo por cable es el último. De ahí en más el
-binario (ya con cámara) entra por Wi-Fi, igual que el nodo del refri.
+`GPIO0` a masa y apretando reset — un baile molesto. Por eso el primer flasheo
+por cable fue el **único**: de ahí en más el binario entra por Wi-Fi, igual que
+el nodo del refri.
 
-## Qué hace hoy
+## Qué hace
 
 - Se conecta al Wi-Fi y al broker MQTT (`broker.hivemq.com`).
+- Sirve la foto en `http://<ip>/foto.jpg`.
 - Se anuncia y publica telemetría con las convenciones del minitool, así que
   aparece solo en las tools **Nodos** y **Sensores**:
 
@@ -67,16 +77,25 @@ define `ota_0`/`ota_1` de 1.87 MB cada una); el arranque se cambia recién
 cuando `esp_ota_end()` valida el binario. Una subida cortada no rompe nada:
 sigue arrancando el viejo.
 
+## Cámara: detalles
+
+- Componente `espressif/esp32-camera`, declarado en `main/idf_component.yml`
+  (el component manager lo baja solo en el primer build — necesita internet esa
+  vez). **No** va en el `REQUIRES` del `CMakeLists`: listarlo a mano rompe la
+  resolución del nombre.
+- Mapa de pines del AI-Thinker en `camera.c`; si algún día se usa otra placa,
+  cambia solo ese bloque.
+- La PSRAM se habilita en `sdkconfig.defaults` con `CONFIG_SPIRAM_IGNORE_NOTFOUND`
+  como red de seguridad: si no monta, el boot no se aborta.
+
 ## Particiones
 
-Dos ranuras de app de 1.87 MB + NVS, sobre los 4 MB de la placa. El firmware de
-esta etapa pesa ~0.9 MB (53% libre en la ranura); cuando entre la cámara
-(`esp32-camera` + JPEG) va a crecer, pero queda margen holgado.
+Dos ranuras de app de 1.87 MB + NVS, sobre los 4 MB de la placa. Con la cámara,
+el binario ronda ~1.2 MB; sigue quedando margen holgado en la ranura.
 
 ## Lo que viene
 
-- **Cámara**: `esp32-camera`, pines del AI-Thinker, y habilitar la PSRAM en
-  `sdkconfig.defaults` (los frame buffers la necesitan; hoy está apagada a
-  propósito, porque prenderla mal es una fuente clásica de cuelgues de arranque).
-- Foto bajo demanda vía `cmd`, o servida en `http://<ip>/foto.jpg`, y quizás un
-  disparo por detección de movimiento publicado al bus de alertas.
+- Disparo por **detección de movimiento** publicado al bus de alertas
+  (`labo/alerta/cam`), que el minitool ya sabe mostrar.
+- Guardar la última foto de una alerta, o servir un stream MJPEG en vez de una
+  sola foto.

@@ -14,8 +14,11 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "esp_camera.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
+#include "camera.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -59,18 +62,45 @@ static esp_err_t root_get(httpd_req_t *req)
     const char *ver = (esp_ota_get_partition_description(run, &desc) == ESP_OK)
                       ? desc.version : "?";
 
-    char body[320];
+    char body[420];
     int n = snprintf(body, sizeof(body),
         "<html><body style='font-family:sans-serif'>"
         "<h3>Nodo camara</h3>"
         "<p>Ranura: <b>%s</b><br>Version: %s<br>Encendido: %llu min</p>"
+        "%s"
         "<p>Actualizar:<br><code>curl -X POST --data-binary @firmware.bin "
         "\"http://IP/update?key=CLAVE\"</code></p>"
         "</body></html>",
-        run ? run->label : "?", ver, esp_timer_get_time() / 60000000ULL);
+        run ? run->label : "?", ver, esp_timer_get_time() / 60000000ULL,
+        camera_ready() ? "<p><a href='/foto.jpg'>Ver foto</a></p>"
+                       : "<p><i>camara no disponible</i></p>");
 
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, body, n);
+}
+
+/* Una foto JPEG. El sensor ya entrega JPEG, así que el frame buffer se manda
+ * tal cual, sin recomprimir. */
+static esp_err_t foto_get(httpd_req_t *req)
+{
+    if (!camera_ready()) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_sendstr(req, "camara no disponible\n");
+    }
+
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) {
+        ESP_LOGE(TAG, "captura fallida");
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "captura fallida");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "image/jpeg");
+    httpd_resp_set_hdr(req, "Content-Disposition", "inline; filename=cam.jpg");
+    esp_err_t r = httpd_resp_send(req, (const char *)fb->buf, fb->len);
+    esp_camera_fb_return(fb);   /* SIEMPRE devolver el buffer, si no se agota */
+    return r;
 }
 
 /* Reinicio diferido: hay que contestarle al curl antes de reiniciar, si no la
@@ -185,10 +215,14 @@ esp_err_t ota_web_start(const char *key, ota_web_notify_t notify_cb)
     static const httpd_uri_t root = {
         .uri = "/", .method = HTTP_GET, .handler = root_get,
     };
+    static const httpd_uri_t foto = {
+        .uri = "/foto.jpg", .method = HTTP_GET, .handler = foto_get,
+    };
     static const httpd_uri_t update = {
         .uri = "/update", .method = HTTP_POST, .handler = update_post,
     };
     httpd_register_uri_handler(s_server, &root);
+    httpd_register_uri_handler(s_server, &foto);
     httpd_register_uri_handler(s_server, &update);
 
     ESP_LOGI(TAG, "OTA por Wi-Fi lista: POST /update?key=...");

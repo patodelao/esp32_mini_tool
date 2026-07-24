@@ -1,0 +1,4 @@
+# Dependencias gestionadas por el component manager de ESP-IDF.
+# Se descargan solas en el primer build (necesita internet esa vez).
+dependencies:
+  espressif/esp32-camera: "^2.0.4"

@@ -1,13 +1,14 @@
 /*
  * main.c — Nodo 'cam' (AI-Thinker ESP32-CAM).
  *
- * ETAPA 1: solo red + telemetría + actualización por Wi-Fi. Todavía SIN cámara.
+ * Red + telemetría + cámara, todo actualizable por Wi-Fi. El primer flasheo por
+ * cable ya está hecho; de acá en más el binario entra por OTA (POST /update),
+ * igual que en el refri.
  *
- * La razón de arrancar así: el ESP32-CAM no tiene USB, se flashea con un
- * adaptador USB-TTL puenteando GPIO0 a masa y apretando reset — un baile que no
- * se quiere repetir cada vez. Con este firmware base ya andando, el primer
- * flasheo por cable es el ÚLTIMO: de ahí en más el binario (ya con cámara)
- * entra por OTA, igual que en el refri.
+ * La foto se ve en http://<ip>/foto.jpg desde cualquier navegador de la red.
+ * La cámara arranca al boot pero NO es crítica: si falla (placa sin sensor,
+ * PSRAM que no monta), el nodo sigue vivo como nodo OTA y /foto.jpg responde
+ * 503, en vez de un cuelgue que obligaría a volver al cable.
  *
  * El nodo se integra al home-lab con las mismas convenciones que los demás:
  *   labo/nodo/cam/status   online/offline (retenido, con last-will)
@@ -37,6 +38,7 @@
 #include "nvs_flash.h"
 
 #include "ota_web.h"
+#include "camera.h"
 
 /* Credenciales fuera del fuente: van en secrets.h (.gitignore). Copiá
  * secrets.h.example a secrets.h y completá el tuyo. Si falta, compila igual
@@ -254,7 +256,7 @@ static void led_task(void *arg)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "Nodo cam (ESP32-CAM) — etapa OTA, sin camara todavia");
+    ESP_LOGI(TAG, "Nodo cam (ESP32-CAM)");
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -266,6 +268,12 @@ void app_main(void)
     gpio_reset_pin(LED_GPIO);
     gpio_set_direction(LED_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level(LED_GPIO, LED_OFF);
+
+    /* La cámara arranca antes que la red, pero su fallo NO frena nada: el nodo
+       tiene que quedar accesible por OTA aunque el sensor no responda. */
+    if (camera_init() != ESP_OK) {
+        ESP_LOGW(TAG, "Camara no disponible; el nodo sigue como nodo OTA");
+    }
 
     s_net_events = xEventGroupCreate();
     xTaskCreate(led_task, "led", 2048, NULL, 2, NULL);
