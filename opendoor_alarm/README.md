@@ -27,7 +27,8 @@ imposible actualizarlo o pedirle algo mientras dormia.)
    - cada 5 s: publica heartbeat `ABIERTO` por MQTT.
 5. Al detectar cierre, apaga salidas y confirma cierre estable por 3 s.
 6. Si se confirma, publica `CERRADO` (QoS 1). Si se reabre antes, vuelve a alarma.
-7. Configura wakeup por GPIO 10 y entra en deep sleep.
+7. Vuelve a vigilar. No duerme: sigue publicando telemetria cada minuto y
+   atendiendo el servidor de actualizacion.
 
 ## MQTT — integración con el minitool
 
@@ -51,22 +52,18 @@ bus de alertas multicanal, sin cambios del lado del minitool.
 > minitool asumen números para graficar y aplicar umbrales.
 >
 > Antes se publicaba en `proyectos/casa/refri/puerta`. El minitool sigue
-> escuchando ese topic viejo por compatibilidad (este nodo no tiene OTA, así
-> que hasta que lo flashees por cable sigue usándolo); se puede quitar de
-> `alert_service.c` una vez actualizado.
+> escuchando ese topic viejo por compatibilidad; ya se puede quitar de
+> `alert_service.c`, porque el nodo está actualizado.
 
-### Estado online/offline (importante)
+### Estado online/offline
 
-El nodo vive en **deep sleep** y solo despierta al abrirse la puerta. Por eso:
+- `online` mientras el nodo está encendido y conectado.
+- Si cae de golpe (corte de energía, pérdida de Wi-Fi), el **LWT** del broker
+  publica `offline` por él.
 
-- `online` = despierto (puerta abierta / alarma activa).
-- `offline` = durmiendo (puerta cerrada), publicado de forma limpia antes de dormir.
-- Si el nodo cae de golpe (corte de energía, pérdida de Wi-Fi), el **LWT** del
-  broker publica `offline` por él.
-
-No es un "heartbeat de salud" continuo (eso gastaría batería): refleja
-despierto/durmiendo. Para health real habría que despertar por temporizador
-cada cierto tiempo y publicar; se puede agregar si se necesita.
+Con la telemetría cada minuto, el silencio prolongado de un nodo que dice estar
+online es señal real de problema, y el minitool lo avisa. Mientras dormía en
+deep sleep esto no se podía distinguir de la operación normal.
 
 ### Niveles de la alerta multicanal (`labo/alerta/refri`)
 
@@ -76,11 +73,11 @@ cada cierto tiempo y publicar; se puede agregar si se necesita.
 
 ## Configuración rápida
 
-Edita en `main/main.c`:
+Credenciales en `main/secrets.h` (ignorado por git; copiar de
+`secrets.h.example`): `WIFI_SSID`, `WIFI_PASSWORD` y `OTA_PASSWORD`.
 
-- `WIFI_SSID`
-- `WIFI_PASSWORD`
-- Pines si tu placa usa otro mapeo.
+En `main/main.c`: los pines, si tu placa usa otro mapeo, y los tiempos de
+escalada de la alarma (`LED_START_DELAY_MS`, `BUZZER_START_DELAY_MS`).
 
 ## Compilar y cargar
 

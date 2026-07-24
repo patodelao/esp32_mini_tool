@@ -26,9 +26,11 @@ extern const tool_t tool_alerts;
 extern const tool_t tool_wifiqr;
 extern const tool_t tool_settings;
 extern const tool_t tool_phone;
+extern const tool_t tool_alarm;
 
 const tool_t *const g_tools[] = {
     &tool_clock,
+    &tool_alarm,
     &tool_level,
     &tool_pedometer,
     &tool_gyro,

@@ -24,6 +24,7 @@
 #include "self_node.h"
 #include "weather_service.h"
 #include "pedometer_service.h"
+#include "alarm_clock.h"
 
 static const char *TAG = "app";
 
@@ -125,6 +126,7 @@ void app_main(void)
         ui_notify_init();          /* notificaciones flotantes */
         ui_power_init();           /* apagado de pantalla + despertar por gesto */
         pedometer_service_init();  /* contador de pasos siempre activo */
+        alarm_clock_init();        /* despertador: suena con cualquier tool abierta */
         create_main_menu();
         bsp_lvgl_unlock();
     }

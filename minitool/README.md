@@ -42,6 +42,7 @@ Sin botones físicos, todo es táctil. Vale la pena tener esto a mano:
 | Deslizar **abajo** | Carátula | Abre el **panel rápido** (silencio, linterna, BT, brillo) |
 | Deslizar **arriba** | Panel rápido | Lo cierra |
 | Tocar la pantalla | Carátula | Vuelve al menú |
+| Tocar la pantalla | Alarma sonando | La apaga |
 | Tocar el gráfico | Sensores (detalle) | Alterna histórico reciente / 24 h |
 | Pulsación **larga** en la papelera | Sensores (detalle) | Olvida el sensor (pide confirmar con una X) |
 
@@ -62,6 +63,7 @@ herramientas son solo vistas.
 | `alert_service` | Bus de alertas `labo/alerta/#` → notificaciones, y estado de la puerta del refri |
 | `weather_service` | Clima con caché. Prefiere el que manda el teléfono; solo descarga de internet si no hay |
 | `pedometer_service` | Pasos del día por acelerómetro, con historial de 7 días y meta |
+| `alarm_clock` | Alarmas diarias. Suena con cualquier tool abierta y con la pantalla apagada |
 | `ble_notify` | Notificaciones del teléfono por BLE (Gadgetbridge), y control de música / buscar teléfono |
 | `ui_notify` | Toasts + historial persistido de las últimas 20 notificaciones |
 | `ui_power` | Apagado de pantalla, despertar por movimiento, brillo y modo noche |
