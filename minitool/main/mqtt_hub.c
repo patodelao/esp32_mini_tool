@@ -11,7 +11,10 @@
 
 static const char *TAG = "mqtt_hub";
 
-#define MQTT_BROKER_URI "mqtt://broker.hivemq.com"
+/* Broker propio en la Raspberry Pi del home-lab (Mosquitto). Se dejó de usar el
+ * público broker.hivemq.com: por ahí pasaban hasta las fotos de la cámara, y era
+ * un servicio ajeno del que dependía todo. La IP es fija por reserva DHCP. */
+#define MQTT_BROKER_URI "mqtt://192.168.1.100"
 #define MAX_SUBS        12
 #define FILTER_MAX      64
 

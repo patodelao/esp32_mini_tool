@@ -1,8 +1,9 @@
 # esp32_mini_tool
 
 Home-lab casero: un reloj-herramienta con pantalla táctil que hace de **consola**
-del sistema, y nodos ESP que miden y actúan. Todo se comunica por **MQTT**, sin
-servidor propio: los nodos publican, el minitool muestra y configura.
+del sistema, y nodos ESP que miden y actúan. Todo se comunica por **MQTT** a
+través de un broker **Mosquitto propio en una Raspberry Pi** (`192.168.1.100`):
+los nodos publican, el minitool muestra y configura. Nada sale de la LAN.
 
 ## Proyectos
 
@@ -24,9 +25,13 @@ particiones).
 
 ## Cómo se hablan: convención de topics
 
-Broker público `broker.hivemq.com` (se cambia en `minitool/main/mqtt_hub.c`).
-Cualquier equipo que respete estos topics aparece solo en las tools, sin tocar
-código del minitool:
+Broker propio **Mosquitto** en la Raspberry Pi `192.168.1.100:1883` (IP fija por
+reserva DHCP). Cada nodo lo lleva hardcodeado; se cambia en `mqtt_hub.c`
+(minitool), el `MQTT_BROKER_URI` de refri/cam, y `MQTT_BROKER` del ESP8266. Se
+dejó el público `broker.hivemq.com` para no depender de un servicio ajeno ni
+mandar afuera datos de la casa (incluidas las fotos de la cámara). Cualquier
+equipo que respete estos topics aparece solo en las tools, sin tocar código del
+minitool:
 
 | Patrón | Sentido | Quién lo usa |
 |---|---|---|

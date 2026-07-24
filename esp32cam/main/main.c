@@ -67,7 +67,9 @@
 #define WIFI_CONNECTED_BIT BIT0
 #define MQTT_CONNECTED_BIT BIT1
 
-#define MQTT_BROKER_URI    "mqtt://broker.hivemq.com"
+/* Broker propio en la Raspberry Pi (Mosquitto), IP fija por reserva DHCP.
+ * Antes: broker.hivemq.com (público). */
+#define MQTT_BROKER_URI    "mqtt://192.168.1.100"
 #define TELEMETRY_MS       60000
 
 #define DEVICE_ID          "cam"

@@ -126,6 +126,12 @@ static esp_err_t update_post(httpd_req_t *req)
         return ESP_FAIL;
     }
 
+    /* CLAVE en un nodo con cámara: apagar el sensor antes de escribir flash. Su
+     * DMA I2S corre en segundo plano tocando PSRAM, y las escrituras a flash
+     * deshabilitan la caché — la combinación cuelga el nodo a mitad de la
+     * subida. Sin esto el OTA fallaba siempre a los ~15 s. */
+    camera_stop();
+
     ESP_LOGI(TAG, "Recibiendo firmware (%d bytes) hacia %s", req->content_len, target->label);
     notify("aviso", "Actualizando firmware por OTA");
 

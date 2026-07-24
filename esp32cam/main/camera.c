@@ -78,3 +78,11 @@ esp_err_t camera_init(void)
 }
 
 bool camera_ready(void) { return s_ready; }
+
+void camera_stop(void)
+{
+    if (!s_ready) return;
+    s_ready = false;
+    esp_camera_deinit();
+    ESP_LOGW(TAG, "Camara detenida (OTA en curso)");
+}

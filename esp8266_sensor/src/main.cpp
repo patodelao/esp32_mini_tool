@@ -140,7 +140,9 @@
 #define ID_VIEJO               "sala"
 
 // --- MQTT ------------------------------------------------------------------
-#define MQTT_BROKER   "broker.hivemq.com"
+// Broker propio en la Raspberry Pi (Mosquitto), IP fija por reserva DHCP.
+// Antes: broker.hivemq.com (publico).
+#define MQTT_BROKER   "192.168.1.100"
 #define MQTT_PORT     1883
 
 #define TOPIC_STATUS  "labo/nodo/"   NODE_ID "/status"

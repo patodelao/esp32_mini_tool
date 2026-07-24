@@ -26,6 +26,12 @@ esp_err_t camera_init(void);
 /* true si la cámara arrancó bien y se le puede pedir una foto. */
 bool camera_ready(void);
 
+/* Apaga la cámara (esp_camera_deinit): detiene el DMA I2S que corre en segundo
+ * plano. HAY que llamarlo antes de un OTA: ese DMA accede a PSRAM y choca con
+ * las escrituras a flash (que deshabilitan la caché), y el nodo se cae a mitad
+ * de la subida. Tras el OTA el nodo reinicia, así que no hace falta re-armarla. */
+void camera_stop(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -63,7 +63,9 @@
 #define DOOR_OPEN_HEARTBEAT_MS 5000
 #define DOOR_CLOSED_CONFIRM_MS 3000
 
-#define MQTT_BROKER_URI "mqtt://broker.hivemq.com"
+/* Broker propio en la Raspberry Pi (Mosquitto), IP fija por reserva DHCP.
+ * Antes: broker.hivemq.com (público). */
+#define MQTT_BROKER_URI "mqtt://192.168.1.100"
 
 /* --- Topics ---------------------------------------------------------------
  * Se mantiene el topic original de la puerta (compatibilidad con el dashboard
