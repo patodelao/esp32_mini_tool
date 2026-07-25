@@ -1,5 +1,5 @@
 Status: active
-Logging: on (low)
+Logging: off
 Default: deny (incoming), allow (outgoing), disabled (routed)
 New profiles: skip
 

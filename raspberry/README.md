@@ -28,7 +28,16 @@ sudo ufw allow from 192.168.1.0/24 to any port 139,445 proto tcp comment 'Samba 
 sudo ufw allow from 192.168.1.0/24 to any port 137,138 proto udp comment 'Samba udp LAN'
 sudo ufw allow from 192.168.1.0/24 to any port 5353 proto udp   comment 'mDNS LAN'
 sudo ufw --force enable
+sudo ufw logging off   # ver "Salud de la SD" abajo
 ```
+
+**Salud de la SD** — En una Pi los logs desgastan la tarjeta. Dos cosas dejan
+`/var/log` tranquilo sin montar `tmpfs` (que agrega riesgo en el arranque):
+- **journald** ya está en modo **volátil** (escribe a RAM `/run`, no a la SD) —
+  es el default cuando no existe `/var/log/journal`.
+- **`ufw logging off`**: el logging de ufw estaba llenando `kern.log` (llegó a
+  51 MB) con cada paquete de broadcast/multicast bloqueado de la LAN. Apagarlo
+  cortó de raíz la escritura pesada. Con esto `/var/log` bajó de 58 MB a ~7 MB.
 
 **SSH solo por clave** — `PasswordAuthentication no` y `PermitRootLogin no` en
 `config/etc/ssh/sshd_config`. El acceso es con la clave `id_ed25519_homelab`
