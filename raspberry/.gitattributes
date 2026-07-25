@@ -1,0 +1,6 @@
+# Todo en raspberry/ se despliega/ejecuta en Linux (la Pi): forzar LF.
+# Evita que Git convierta a CRLF en Windows y rompa los scripts bash y configs.
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.service text eol=lf

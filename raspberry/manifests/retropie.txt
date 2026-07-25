@@ -1,0 +1,13 @@
+4.8
+
+roms:
+238 gba
+98 psx
+77 snes
+38 nes
+24 n64
+9 gbc
+3 nds
+3 gb
+2 arcade
+1 mame-libretro
