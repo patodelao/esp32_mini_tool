@@ -1,0 +1,13 @@
+[Unit]
+Description=Home-lab cam capture agent
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+User=pi
+ExecStart=/usr/bin/python3 /home/pi/homelab/cam_capture.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
