@@ -26,8 +26,10 @@ static const char *TAG = "sensor_svc";
 #define SENSOR_FILTER "labo/sensor/#"
 #define SENSOR_PREFIX "labo/sensor/"
 /* Un solo nodo puede traer 6 topics (temp, hum, suelo, rssi, uptime, heap),
- * así que 8 quedaba corto en cuanto hay dos nodos. */
-#define MAX_SENSORS   16
+ * así que 8 quedaba corto en cuanto hay dos nodos. Con la Pi auto-monitoreándose
+ * (nodo 'pi': temp, uptime, rssi, cpu, disco) la flota pasó de 16, que ya se
+ * desbordaba; 24 deja margen. */
+#define MAX_SENSORS   24
 #define ID_MAX        SENSOR_ID_MAX
 #define VAL_MAX       16
 
@@ -127,6 +129,8 @@ const char *sensor_unit(const char *id)
     if (strcmp(leaf, "rssi")   == 0) return "dBm";
     if (strcmp(leaf, "uptime") == 0) return "min";
     if (strcmp(leaf, "heap")   == 0) return "kB";
+    if (strcmp(leaf, "cpu")    == 0) return "%";
+    if (strcmp(leaf, "disco")  == 0) return "%";
     if (strcmp(leaf, "abierta_seg") == 0) return "s";
     return "";
 }
@@ -147,6 +151,7 @@ static const char *node_name(const char *node)
     static const struct { const char *id; const char *name; } M[] = {
         { "pieza", "Pieza" },
         { "refri", "Refri" },
+        { "pi",    "RetroPi" },
     };
     for (unsigned i = 0; i < sizeof(M) / sizeof(M[0]); i++)
         if (strcmp(M[i].id, node) == 0) return M[i].name;
@@ -165,6 +170,8 @@ static const char *mag_name(const char *leaf)
     if (strcmp(leaf, "rssi")   == 0) return "Wifi";
     if (strcmp(leaf, "uptime") == 0) return "Encendido";
     if (strcmp(leaf, "heap")   == 0) return "RAM";
+    if (strcmp(leaf, "cpu")    == 0) return "CPU";
+    if (strcmp(leaf, "disco")  == 0) return "Disco";
     if (strcmp(leaf, "abierta_seg") == 0) return "Abierta";
     return leaf;
 }

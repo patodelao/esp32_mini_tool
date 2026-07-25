@@ -116,6 +116,32 @@ sudo systemctl daemon-reload && sudo systemctl enable --now homelab-gallery
 sudo ufw allow from 192.168.1.0/24 to any port 8088 proto tcp comment 'Galeria cam LAN'
 ```
 
+## Auto-monitoreo de la Pi — `monitor/pi_monitor.py`
+
+La Pi se publica a sí misma a MQTT como **un nodo más** (id `pi`, que el minitool
+muestra como *RetroPi*), siguiendo las convenciones de la flota:
+
+| Topic | Contenido |
+|---|---|
+| `labo/nodo/pi/status` | `online`/`offline` (retenido, con last-will) |
+| `labo/nodo/pi/ip` | IP en la LAN |
+| `labo/sensor/pi/temp` | temperatura CPU, °C |
+| `labo/sensor/pi/uptime` | encendido, min |
+| `labo/sensor/pi/rssi` | señal WiFi, dBm |
+| `labo/sensor/pi/cpu` | uso de CPU, % |
+| `labo/sensor/pi/disco` | uso de `/`, % |
+
+Así aparece sola en las tools **Nodos** y **Sensores** del minitool. Requirió
+subir `MAX_SENSORS` de 16 a 24 en el minitool (`sensor_service.c`) — con la Pi la
+flota pasó de 16, que ya se desbordaba — y agregar el label `pi`→`RetroPi` y las
+unidades de `cpu`/`disco`. Solo stdlib + paho-mqtt.
+
+```bash
+cp monitor/pi_monitor.py ~/homelab/pi_monitor.py
+sudo cp monitor/homelab-monitor.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now homelab-monitor
+```
+
 ## Estructura de esta carpeta
 
 ```
@@ -125,6 +151,9 @@ raspberry/
 ├── gallery/
 │   ├── gallery.py          galería web de las fotos (stdlib, puerto 8088)
 │   └── homelab-gallery.service
+├── monitor/
+│   ├── pi_monitor.py       la Pi se auto-publica a MQTT (nodo 'pi' = RetroPi)
+│   └── homelab-monitor.service
 ├── scripts/
 │   ├── backup-homelab.sh   respaldo de lo irrecuperable (ver abajo)
 │   └── pi-snapshot.sh      refresca config/ y manifests/ desde el PC

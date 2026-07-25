@@ -17,6 +17,7 @@ gldriver-test.service
 hciuart.service
 homelab-cam.service
 homelab-gallery.service
+homelab-monitor.service
 keyboard-setup.service
 mosquitto.service
 networking.service
