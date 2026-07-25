@@ -186,6 +186,15 @@ La distinción entre *buscando* y *apagado* es la que faltaba: "sin conexión"
 tapaba las dos, y son problemas opuestos. Con el SSID al lado se ve enseguida
 si está intentando entrar a la red equivocada.
 
+### Aviso de broker caído
+
+El broker vive en una Raspberry Pi que puede estar apagada. Cuando hay Wi-Fi
+pero el broker no responde por más de unos segundos, aparece una **píldora
+ámbar "Sin broker"** arriba de cualquier pantalla (`ui_broker_banner.c`). Deja
+claro que falta la Pi, no que el reloj se colgó: la vista de Sensores/Nodos deja
+de actualizarse, pero cada nodo sigue con su función local y todo se recompone
+solo cuando la Pi vuelve. El aviso desaparece solo al reconectar.
+
 En la carátula, el icono de Wi-Fi **ya no desaparece** cuando no hay red:
 queda rojo si busca y no llega, gris si está apagado a propósito. Antes se
 escondía, y una carátula sin iconos se ve igual de prolija que una conectada —

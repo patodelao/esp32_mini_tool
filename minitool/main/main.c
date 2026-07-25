@@ -17,6 +17,7 @@
 #include "ui_menu.h"
 #include "ui_notify.h"
 #include "ui_power.h"
+#include "ui_broker_banner.h"
 #include "mqtt_hub.h"
 #include "alert_service.h"
 #include "fleet_service.h"
@@ -129,6 +130,7 @@ void app_main(void)
         ui_power_init();           /* apagado de pantalla + despertar por gesto */
         pedometer_service_init();  /* contador de pasos siempre activo */
         alarm_clock_init();        /* despertador: suena con cualquier tool abierta */
+        ui_broker_banner_init();   /* aviso cuando la Pi/broker no esta */
         create_main_menu();
         bsp_lvgl_unlock();
     }

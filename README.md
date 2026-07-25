@@ -33,6 +33,14 @@ mandar afuera datos de la casa (incluidas las fotos de la cámara). Cualquier
 equipo que respete estos topics aparece solo en las tools, sin tocar código del
 minitool:
 
+> **Si la Pi se apaga, el sistema no se cae.** Probado apagando el broker: los
+> nodos no se reinician ni se cuelgan, sus funciones locales siguen (la alarma
+> del refri, los sensores, la cámara por HTTP), reconectan con backoff (el
+> ESP8266 hasta 60 s) y se recomponen solos cuando la Pi vuelve. El broker
+> persiste el estado retenido en disco y arranca al bootear, así que un reinicio
+> de la Pi se recupera sin intervención. Lo único que se pausa es la vista
+> agregada del minitool, que lo avisa con la píldora "Sin broker".
+
 | Patrón | Sentido | Quién lo usa |
 |---|---|---|
 | `labo/sensor/<nodo>/<magnitud>` | nodo → minitool | tool **Sensores**: valor, gráfico, récord del día y umbrales |
