@@ -1,0 +1,13 @@
+[Unit]
+Description=Home-lab gallery (fotos del cam via web)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+ExecStart=/usr/bin/python3 /home/pi/homelab/gallery.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

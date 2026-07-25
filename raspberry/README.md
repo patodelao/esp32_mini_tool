@@ -94,10 +94,27 @@ sudo cp homelab-cam.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now homelab-cam
 ```
 
-### Ver las fotos guardadas
+### Ver las fotos guardadas — galería web (`gallery/`)
 
-Por ahora se acceden entrando a la Pi (`~/homelab/fotos/`). Pendiente: una
-galería web para verlas desde el navegador sin SSH.
+`gallery/gallery.py` sirve las fotos de `~/homelab/fotos/` en una página web,
+más nuevas primero y paginada. Solo usa la biblioteca estándar de Python (nada
+que instalar) y corre como servicio systemd. El firewall limita el puerto a la
+LAN, igual que el resto.
+
+Abrir desde cualquier equipo de casa:
+
+```
+http://192.168.1.100:8088/     (o http://retropie.local:8088/)
+```
+
+Instalación:
+
+```bash
+cp gallery/gallery.py ~/homelab/gallery.py
+sudo cp gallery/homelab-gallery.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now homelab-gallery
+sudo ufw allow from 192.168.1.0/24 to any port 8088 proto tcp comment 'Galeria cam LAN'
+```
 
 ## Estructura de esta carpeta
 
@@ -105,13 +122,18 @@ galería web para verlas desde el navegador sin SSH.
 raspberry/
 ├── cam_capture.py          agente de captura de la cámara
 ├── homelab-cam.service     unit systemd del agente
+├── gallery/
+│   ├── gallery.py          galería web de las fotos (stdlib, puerto 8088)
+│   └── homelab-gallery.service
 ├── scripts/
-│   └── backup-homelab.sh   respaldo de lo irrecuperable (ver abajo)
+│   ├── backup-homelab.sh   respaldo de lo irrecuperable (ver abajo)
+│   └── pi-snapshot.sh      refresca config/ y manifests/ desde el PC
 ├── config/                 copia versionada de la config REAL de la Pi
 │   └── etc/{mosquitto,samba,ssh}/...
 └── manifests/              inventario para reconstruir igual
     ├── apt-manual.txt          paquetes instalados a mano
     ├── systemd-enabled.txt     servicios habilitados
+    ├── ufw-status.txt          reglas del firewall
     ├── crontab.txt             tareas cron (pi + root)
     └── retropie.txt            versión RetroPie + conteo de ROMs
 ```

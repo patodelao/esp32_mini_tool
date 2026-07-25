@@ -16,6 +16,7 @@ getty@.service
 gldriver-test.service
 hciuart.service
 homelab-cam.service
+homelab-gallery.service
 keyboard-setup.service
 mosquitto.service
 networking.service
@@ -32,6 +33,7 @@ sshswitch.service
 syslog.service
 systemd-timesyncd.service
 triggerhappy.service
+ufw.service
 wpa_supplicant.service
 avahi-daemon.socket
 triggerhappy.socket

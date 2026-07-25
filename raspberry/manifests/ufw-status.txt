@@ -10,4 +10,5 @@ To                         Action      From
 139,445/tcp                ALLOW IN    192.168.1.0/24             # Samba tcp LAN
 137,138/udp                ALLOW IN    192.168.1.0/24             # Samba udp LAN
 5353/udp                   ALLOW IN    192.168.1.0/24             # mDNS LAN
+8088/tcp                   ALLOW IN    192.168.1.0/24             # Galeria cam LAN
 
