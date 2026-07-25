@@ -14,6 +14,10 @@ static const char *TAG = "fleet";
 #define FLEET_FILTER    "labo/nodo/+/status"
 #define FLEET_IP_FILTER "labo/nodo/+/ip"
 #define MAX_NODES    12
+/* Segundos sin NINGÚN dato del nodo para recién darlo por "sin señal". El nodo
+ * más lento publica telemetría cada 60 s, así que 180 s (3 ciclos) tolera un
+ * parpadeo de WiFi sin marcar caído a un nodo que en realidad sigue vivo. */
+#define FLEET_LIVENESS_S 180
 #define ID_MAX       24
 #define IP_MAX       16   /* "255.255.255.255" + '\0' */
 
@@ -72,7 +76,11 @@ static void fleet_cb(const char *topic, int topic_len, const char *data, int dat
     node_t *n = find_or_add(id);
     if (!n) return;
     n->online = ((int)strlen("online") == data_len && strncmp(data, "online", data_len) == 0);
-    n->last_us = esp_timer_get_time();
+    /* last_us = última EVIDENCIA de vida. Un "offline" (típicamente el last-will
+     * disparado por un parpadeo de WiFi) NO cuenta como vida: así, si el nodo
+     * sigue publicando sensores, la ventana FLEET_LIVENESS_S lo mantiene online
+     * pese al offline espurio. */
+    if (n->online) n->last_us = esp_timer_get_time();
     ESP_LOGI(TAG, "Nodo %s -> %s", id, n->online ? "online" : "offline");
 }
 
@@ -117,9 +125,12 @@ bool fleet_get(int idx, char *id, int id_size, bool *online, uint32_t *age_s)
     for (int i = 0; i < MAX_NODES; i++) {
         if (!s_nodes[i].used) continue;
         if (c == idx) {
+            uint32_t age = (uint32_t)((esp_timer_get_time() - s_nodes[i].last_us) / 1000000ULL);
             if (id) strlcpy(id, s_nodes[i].id, id_size);
-            if (online) *online = s_nodes[i].online;
-            if (age_s) *age_s = (uint32_t)((esp_timer_get_time() - s_nodes[i].last_us) / 1000000ULL);
+            /* Online si se declara online O si mandó algo hace poco (aunque su
+             * status haya quedado offline por un last-will espurio). */
+            if (online) *online = s_nodes[i].online || (age < FLEET_LIVENESS_S);
+            if (age_s) *age_s = age;
             return true;
         }
         c++;
@@ -139,9 +150,24 @@ void fleet_set_local(const char *id, bool online)
 bool fleet_is_online(const char *id)
 {
     for (int i = 0; i < MAX_NODES; i++) {
-        if (s_nodes[i].used && strcmp(s_nodes[i].id, id) == 0) return s_nodes[i].online;
+        if (s_nodes[i].used && strcmp(s_nodes[i].id, id) == 0) {
+            uint32_t age = (uint32_t)((esp_timer_get_time() - s_nodes[i].last_us) / 1000000ULL);
+            return s_nodes[i].online || (age < FLEET_LIVENESS_S);
+        }
     }
     return true;   /* nodo desconocido: no suprimir el aviso */
+}
+
+/* Cualquier dato del nodo (una lectura suya) es evidencia de vida: refresca su
+ * marca de tiempo sin tocar el flag 'online'. Lo llama sensor_service en cada
+ * lectura recibida, para que un nodo que sigue publicando no figure "sin señal"
+ * aunque su topic status haya quedado offline por un last-will espurio. */
+void fleet_note_activity(const char *id)
+{
+    if (!id || !id[0]) return;
+    node_t *n = find_or_add(id);
+    if (!n) return;
+    n->last_us = esp_timer_get_time();
 }
 
 bool fleet_get_ip(int idx, char *ip, int ip_size)

@@ -1,8 +1,8 @@
 /*
  * tool_fleet.c — Panel de nodos (ESP/equipos) del home-lab.
  *
- * Muestra los nodos vistos por fleet_service con su estado. Verde=online,
- * rojo=offline, gris="sin señal" (sin mensajes recientes). Solo lectura.
+ * Muestra los nodos vistos por fleet_service con su estado. Verde=online (con
+ * datos recientes), gris="sin señal" (sin ningún dato hace rato). Solo lectura.
  */
 #include "tool.h"
 #include "ui_theme.h"
@@ -11,7 +11,11 @@
 #include <stdio.h>
 #include <string.h>
 
-#define STALE_S 90   /* sin mensajes por más de esto => "sin señal" */
+/* Sin NINGÚN dato por más de esto => "sin señal". Alineado con FLEET_LIVENESS_S:
+ * fleet_service ya alimenta la antigüedad con cada sensor recibido, así que un
+ * nodo vivo casi nunca la alcanza. 180 s tolera un par de ciclos de telemetría
+ * (60 s el más lento) perdidos por un parpadeo de WiFi sin marcarlo caído. */
+#define STALE_S 180
 
 static lv_obj_t *s_cont = NULL;
 static lv_obj_t *s_empty = NULL;

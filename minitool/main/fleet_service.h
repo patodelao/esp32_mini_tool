@@ -49,6 +49,11 @@ bool fleet_get_ip(int i, char *ip, int ip_size);
  * y, encima, más lento. */
 void fleet_set_local(const char *id, bool online);
 
+/* Refresca la "última evidencia de vida" de un nodo sin tocar su flag online.
+ * sensor_service la llama con el id del nodo en cada lectura recibida, para que
+ * un nodo que sigue publicando no aparezca "sin señal" por un offline espurio. */
+void fleet_note_activity(const char *id);
+
 #ifdef __cplusplus
 }
 #endif

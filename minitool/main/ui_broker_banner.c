@@ -51,7 +51,10 @@ void ui_broker_banner_init(void)
     s_pill = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(s_pill);
     lv_obj_set_size(s_pill, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_align(s_pill, LV_ALIGN_TOP_MID, 0, 4);
+    /* Abajo-centro: arriba está la barra de estado (hora, WiFi, BT, clima) y la
+     * píldora la tapaba. Acá no estorba y sigue bien visible en la pantalla
+     * redonda (debajo de los contadores de pasos/suelo). */
+    lv_obj_align(s_pill, LV_ALIGN_BOTTOM_MID, 0, -8);
     lv_obj_set_style_bg_color(s_pill, lv_color_hex(UI_WARN), 0);
     lv_obj_set_style_bg_opa(s_pill, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(s_pill, 10, 0);

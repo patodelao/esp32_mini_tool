@@ -133,6 +133,9 @@ def main():
     client.loop_start()
     try:
         while True:
+            # El "online" va en CADA vuelta, no solo al conectar: si el last-will
+            # marcó offline por un parpadeo de red, esto lo revierte enseguida.
+            client.publish(T_STATUS, "online", qos=1, retain=True)
             pub(client, T_SENSOR + "temp", cpu_temp_c())
             pub(client, T_SENSOR + "uptime", uptime_min())
             pub(client, T_SENSOR + "rssi", wifi_rssi_dbm())

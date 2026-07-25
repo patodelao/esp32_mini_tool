@@ -11,6 +11,7 @@
 #include "sensor_service.h"
 #include "sensor_alert.h"
 #include "mqtt_hub.h"
+#include "fleet_service.h"   /* fleet_note_activity: un sensor = nodo vivo */
 
 #include "esp_timer.h"
 #include "esp_log.h"
@@ -471,6 +472,12 @@ static void sensor_cb(const char *topic, int topic_len, const char *data, int da
 
     sensor_t *s = find_or_add(id);
     if (!s) return;
+
+    /* Recibir un sensor de un nodo prueba que está vivo, aunque su topic status
+     * haya quedado offline por un last-will espurio. Refresca su liveness. */
+    char nodebuf[ID_MAX];
+    sensor_node_id(id, nodebuf, sizeof(nodebuf));
+    fleet_note_activity(nodebuf);
 
     strlcpy(s->val, valbuf, sizeof(s->val));
     float f = strtof(valbuf, NULL);
