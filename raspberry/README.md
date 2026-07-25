@@ -10,6 +10,65 @@ habilitado, escucha en `1883`. Config por defecto de Debian: `persistence true`
 en `/var/lib/mosquitto/`, así que los mensajes retenidos sobreviven a un
 reinicio de la Pi. Es el broker al que apuntan los 4 nodos.
 
+## Seguridad
+
+La Pi está en la LAN de casa (sin exposición a internet mientras el router no
+haga port-forward). Endurecimiento aplicado:
+
+**Firewall (`ufw`)** — Solo se aceptan conexiones desde `192.168.1.0/24`; el
+resto se rechaza. Reglas en `manifests/ufw-status.txt`. Reconstruir:
+
+```bash
+sudo apt install -y ufw
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow from 192.168.1.0/24 to any port 22 proto tcp     comment 'SSH LAN'
+sudo ufw allow from 192.168.1.0/24 to any port 1883 proto tcp   comment 'MQTT LAN'
+sudo ufw allow from 192.168.1.0/24 to any port 139,445 proto tcp comment 'Samba tcp LAN'
+sudo ufw allow from 192.168.1.0/24 to any port 137,138 proto udp comment 'Samba udp LAN'
+sudo ufw allow from 192.168.1.0/24 to any port 5353 proto udp   comment 'mDNS LAN'
+sudo ufw --force enable
+```
+
+**SSH solo por clave** — `PasswordAuthentication no` y `PermitRootLogin no` en
+`config/etc/ssh/sshd_config`. El acceso es con la clave `id_ed25519_homelab`
+(ver [[raspberry-broker]] en memoria). Tras editar: `sudo sshd -t && sudo
+systemctl reload ssh`.
+
+**Samba** — Los recursos (`roms`, `bios`, `configs`, `splashscreens`) siguen
+como `guest`, pero ahora solo alcanzables desde la LAN por el firewall. Si en el
+futuro se quiere exigir contraseña: quitar `guest ok = yes` de cada share, poner
+`valid users = pi` y crear la clave con `sudo smbpasswd -a pi`.
+
+### Migración del broker a MQTT con auth
+
+Hoy el broker es anónimo. El firmware de los 4 nodos ya está **preparado** para
+mandar usuario/clave (definiendo `MQTT_USER`/`MQTT_PASS` en el `secrets` de cada
+nodo); mientras no se definan, siguen conectando anónimos. Para exigir auth sin
+cortar la flota:
+
+1. **Crear el usuario en la Pi** (elegí una clave; se pide dos veces):
+   ```bash
+   sudo mosquitto_passwd -c /etc/mosquitto/passwd fleet
+   ```
+2. **Activar el archivo de auth** dejando `allow_anonymous true` (los nodos
+   viejos siguen andando):
+   ```bash
+   sudo cp config/etc/mosquitto/conf.d/auth.conf /etc/mosquitto/conf.d/
+   sudo systemctl restart mosquitto
+   ```
+3. **Reflashear los nodos uno por uno** con las credenciales:
+   - ESP-IDF (`minitool`, `esp32cam`, `opendoor_alarm`): descomentar
+     `MQTT_USER`/`MQTT_PASS` en su `secrets.h` y flashear (OTA o cable).
+   - ESP8266 (`esp8266_sensor` = *pieza*): descomentar las líneas
+     `-DMQTT_USER/-DMQTT_PASS` en `platformio.ini` y agregar `mqtt_user`/
+     `mqtt_pass` a `secrets.ini`, luego flashear.
+   El usuario/clave debe ser el mismo `fleet` del paso 1 en los 4.
+4. **Cerrar el anónimo**: cuando los 4 ya conectan con credenciales, editar
+   `/etc/mosquitto/conf.d/auth.conf` a `allow_anonymous false` y
+   `sudo systemctl restart mosquitto`. Verificar en la tool Nodos del minitool
+   que los 4 siguen `online`.
+
 ## Agente de captura de la cámara — `cam_capture.py`
 
 Baja `http://<cam>/foto.jpg` cada X minutos y guarda las fotos con fecha en

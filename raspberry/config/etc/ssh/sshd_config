@@ -119,3 +119,8 @@ Subsystem	sftp	/usr/lib/openssh/sftp-server
 #	AllowTcpForwarding no
 #	PermitTTY no
 #	ForceCommand cvs server
+
+# --- Hardening home-lab (solo clave, 2026-07-24) ---
+PasswordAuthentication no
+PermitRootLogin no
+PubkeyAuthentication yes

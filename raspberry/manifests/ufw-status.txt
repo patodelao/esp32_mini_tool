@@ -1,0 +1,13 @@
+Status: active
+Logging: on (low)
+Default: deny (incoming), allow (outgoing), disabled (routed)
+New profiles: skip
+
+To                         Action      From
+--                         ------      ----
+22/tcp                     ALLOW IN    192.168.1.0/24             # SSH LAN
+1883/tcp                   ALLOW IN    192.168.1.0/24             # MQTT LAN
+139,445/tcp                ALLOW IN    192.168.1.0/24             # Samba tcp LAN
+137,138/udp                ALLOW IN    192.168.1.0/24             # Samba udp LAN
+5353/udp                   ALLOW IN    192.168.1.0/24             # mDNS LAN
+

@@ -36,6 +36,14 @@
 #ifndef OTA_PASSWORD
 #define OTA_PASSWORD "cambiame"
 #endif
+/* Credenciales del broker. NULL = anónimo (broker sin auth). Para broker con
+ * password, definí MQTT_USER/MQTT_PASS en secrets.h. */
+#ifndef MQTT_USER
+#define MQTT_USER NULL
+#endif
+#ifndef MQTT_PASS
+#define MQTT_PASS NULL
+#endif
 
 #define DOOR_SENSOR_GPIO GPIO_NUM_10
 #define DOOR_OPEN_LEVEL 1
@@ -421,6 +429,8 @@ static void mqtt_start(void)
 {
     const esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = MQTT_BROKER_URI,
+        .credentials.username = MQTT_USER,
+        .credentials.authentication.password = MQTT_PASS,
         .network.disable_auto_reconnect = false,
         /* Testamento (LWT): si el nodo cae de golpe (corte de energía, pérdida
            de Wi-Fi sin cierre limpio), el broker publica "offline" por él. */

@@ -15,6 +15,21 @@ static const char *TAG = "mqtt_hub";
  * público broker.hivemq.com: por ahí pasaban hasta las fotos de la cámara, y era
  * un servicio ajeno del que dependía todo. La IP es fija por reserva DHCP. */
 #define MQTT_BROKER_URI "mqtt://192.168.1.100"
+
+/* Credenciales del broker. Sin secrets.h (o con MQTT_USER sin definir) el
+ * cliente conecta anónimo, compatible con el broker sin auth. Para migrar a un
+ * broker con password, definí MQTT_USER/MQTT_PASS en secrets.h (mismos que el
+ * usuario creado con `mosquitto_passwd` en la Pi). NULL = sin credenciales. */
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+#ifndef MQTT_USER
+#define MQTT_USER NULL
+#endif
+#ifndef MQTT_PASS
+#define MQTT_PASS NULL
+#endif
+
 #define MAX_SUBS        12
 #define FILTER_MAX      64
 
@@ -92,6 +107,8 @@ void mqtt_hub_init(void)
      * propio reloj figuraría online para siempre en su tool Nodos. */
     esp_mqtt_client_config_t cfg = {
         .broker.address.uri = MQTT_BROKER_URI,
+        .credentials.username = MQTT_USER,
+        .credentials.authentication.password = MQTT_PASS,
         .session.last_will = {
             .topic  = SELF_NODE_STATUS_TOPIC,
             .msg    = "offline",

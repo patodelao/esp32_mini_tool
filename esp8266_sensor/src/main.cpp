@@ -145,6 +145,15 @@
 #define MQTT_BROKER   "192.168.1.100"
 #define MQTT_PORT     1883
 
+// Credenciales del broker. NULL = anonimo (broker sin auth). Para broker con
+// password, se definen via build_flags desde secrets.ini (ver platformio.ini).
+#ifndef MQTT_USER
+#define MQTT_USER NULL
+#endif
+#ifndef MQTT_PASS
+#define MQTT_PASS NULL
+#endif
+
 #define TOPIC_STATUS  "labo/nodo/"   NODE_ID "/status"
 #define TOPIC_IP      "labo/nodo/"   NODE_ID "/ip"    /* para poder actualizarlo por OTA */
 #define TOPIC_TEMP    "labo/sensor/" NODE_ID "/temp"
@@ -482,9 +491,10 @@ static void mqttMantener() {
 
   Serial.printf("MQTT: conectando a %s:%d como %s ...\n",
                 MQTT_BROKER, MQTT_PORT, clientId);
-  // connect(id, willTopic, willQoS, willRetain, willMessage): el LWT deja
-  // "offline" retenido si el nodo se desconecta sin avisar.
-  if (mqtt.connect(clientId, TOPIC_STATUS, 1, true, "offline")) {
+  // connect(id, user, pass, willTopic, willQoS, willRetain, willMessage): el LWT
+  // deja "offline" retenido si el nodo se desconecta sin avisar. user/pass NULL
+  // = anonimo (compatible con el broker sin auth).
+  if (mqtt.connect(clientId, MQTT_USER, MQTT_PASS, TOPIC_STATUS, 1, true, "offline")) {
     mqttAlConectar();
     s_esperaMqtt = 3000;
   } else {
