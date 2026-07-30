@@ -17,6 +17,8 @@
  *   labo/sensor/cam/rssi   dBm    (retenido)
  *   labo/sensor/cam/uptime minutos
  *   labo/sensor/cam/heap   kB libres
+ *   labo/sensor/cam/temp   °C     (DHT en GPIO13, retenido)
+ *   labo/sensor/cam/hum    %      (DHT en GPIO13, retenido)
  *   labo/alerta/cam        JSON multicanal
  * Así aparece solo en las tools Nodos y Sensores del minitool, sin tocar nada.
  */
@@ -39,6 +41,7 @@
 
 #include "ota_web.h"
 #include "camera.h"
+#include "dht.h"
 
 /* Credenciales fuera del fuente: van en secrets.h (.gitignore). Copiá
  * secrets.h.example a secrets.h y completá el tuyo. Si falta, compila igual
@@ -75,9 +78,11 @@
 #define WIFI_CONNECTED_BIT BIT0
 #define MQTT_CONNECTED_BIT BIT1
 
-/* Broker propio en la Raspberry Pi (Mosquitto), IP fija por reserva DHCP.
- * Antes: broker.hivemq.com (público). */
-#define MQTT_BROKER_URI    "mqtt://192.168.1.100"
+/* Broker primario del home-lab: ahora en el nodo del refri (opendoor, .108),
+ * que está siempre enchufado. Antes en la Raspberry Pi (.100), que se apaga y
+ * dejaba a la flota sin broker. La Pi hace de bridge/logging cuando está.
+ * IP fija por reserva DHCP. */
+#define MQTT_BROKER_URI    "mqtt://192.168.1.108"
 #define TELEMETRY_MS       60000
 
 #define DEVICE_ID          "cam"
@@ -88,6 +93,15 @@
 #define MQTT_TOPIC_RSSI    "labo/sensor/" DEVICE_ID "/rssi"
 #define MQTT_TOPIC_UPTIME  "labo/sensor/" DEVICE_ID "/uptime"
 #define MQTT_TOPIC_HEAP    "labo/sensor/" DEVICE_ID "/heap"
+#define MQTT_TOPIC_TEMP    "labo/sensor/" DEVICE_ID "/temp"
+#define MQTT_TOPIC_HUM     "labo/sensor/" DEVICE_ID "/hum"
+
+/* Sensor de ambiente DHT conectado al pin de datos GPIO13.
+ * OJO con el TIPO: el módulo BLANCO (AM2302) es DHT_TYPE_DHT22; el AZUL es
+ * DHT_TYPE_DHT11. Si sale un valor absurdo (humedad de cientos de %, temp rara),
+ * es que este define está al revés: cambialo y reflasheá. */
+#define DHT_GPIO           GPIO_NUM_14
+#define DHT_KIND           DHT_TYPE_DHT22
 
 static const char *TAG = "cam";
 static EventGroupHandle_t s_net_events;
@@ -148,6 +162,33 @@ static void publish_salud(void)
     esp_mqtt_client_publish(s_mqtt, MQTT_TOPIC_HEAP, buf, 0, 1, 1);
 }
 
+/* Ambiente (DHT en GPIO13): temperatura y humedad como sensores retenidos, igual
+ * que los del nodo pieza. Si la lectura falla (cableado, sensor recién
+ * encendido), NO se publica: mejor dejar el último valor bueno que meter basura
+ * y disparar una falsa alerta. */
+static void publish_ambiente(void)
+{
+    if (!mqtt_ready()) return;
+    float t = 0, h = 0;
+    int st = dht_read(DHT_GPIO, DHT_KIND, &t, &h);
+    /* Diagnóstico visible por MQTT (retenido), para poder ver el motivo del fallo
+     * sin cable serie: "ok", o "errN" (N=1..4 el sensor no responde=hardware;
+     * N=5 checksum=timing/ruido). Ver dht.h. */
+    char dbg[8];
+    snprintf(dbg, sizeof(dbg), st == 0 ? "ok" : "err%d", st);
+    esp_mqtt_client_publish(s_mqtt, "labo/nodo/" DEVICE_ID "/dht", dbg, 0, 1, 1);
+    if (st != 0) {
+        ESP_LOGW(TAG, "DHT sin lectura valida (cod %d) en GPIO%d", st, DHT_GPIO);
+        return;
+    }
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%.1f", t);
+    esp_mqtt_client_publish(s_mqtt, MQTT_TOPIC_TEMP, buf, 0, 1, 1);
+    snprintf(buf, sizeof(buf), "%.1f", h);
+    esp_mqtt_client_publish(s_mqtt, MQTT_TOPIC_HUM, buf, 0, 1, 1);
+    ESP_LOGI(TAG, "Ambiente -> T %.1f C   HR %.1f %%", t, h);
+}
+
 /* ------------------------------- Eventos ---------------------------------- */
 
 static void mqtt_event_handler(void *args, esp_event_base_t base, int32_t id, void *data)
@@ -160,6 +201,7 @@ static void mqtt_event_handler(void *args, esp_event_base_t base, int32_t id, vo
         gpio_set_level(LED_GPIO, LED_ON);   /* señal de vida: fijo = conectado */
         publish_salud();
         publish_ip();
+        publish_ambiente();
         esp_mqtt_client_subscribe(s_mqtt, MQTT_TOPIC_CMD, 1);
         /* El servidor de OTA se levanta recién con red arriba. */
         ota_web_start(OTA_PASSWORD, publish_alert);
@@ -178,6 +220,7 @@ static void mqtt_event_handler(void *args, esp_event_base_t base, int32_t id, vo
         } else if (strcmp(cmd, "leer") == 0) {
             publish_salud();
             publish_ip();
+            publish_ambiente();
         }
     } else if (id == MQTT_EVENT_DISCONNECTED) {
         xEventGroupClearBits(s_net_events, MQTT_CONNECTED_BIT);
@@ -281,6 +324,8 @@ void app_main(void)
     gpio_set_direction(LED_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level(LED_GPIO, LED_OFF);
 
+    dht_init(DHT_GPIO);   /* sensor de ambiente (humedad + temp) en GPIO13 */
+
     /* La cámara arranca antes que la red, pero su fallo NO frena nada: el nodo
        tiene que quedar accesible por OTA aunque el sensor no responda. */
     if (camera_init() != ESP_OK) {
@@ -298,5 +343,6 @@ void app_main(void)
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(TELEMETRY_MS));
         publish_salud();
+        publish_ambiente();
     }
 }
