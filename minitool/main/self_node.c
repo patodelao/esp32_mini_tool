@@ -9,6 +9,7 @@
 #include "mqtt_hub.h"
 #include "wifi_manager.h"
 #include "fleet_service.h"
+#include "bt_manager.h"   /* estado BLE para diagnóstico */
 
 #include "esp_timer.h"
 #include "esp_log.h"
@@ -24,6 +25,7 @@ static const char *TAG = "self_node";
 #define TOPIC_RSSI   "labo/sensor/" SELF_NODE_ID "/rssi"
 #define TOPIC_HEAP   "labo/sensor/" SELF_NODE_ID "/heap"
 #define TOPIC_UPTIME "labo/sensor/" SELF_NODE_ID "/uptime"
+#define TOPIC_BLE    "labo/nodo/"   SELF_NODE_ID "/ble"   /* estado BLE (diagnóstico) */
 
 #define PERIOD_US (60ULL * 1000000ULL)
 
@@ -85,6 +87,11 @@ static void publish_all(void)
 
     snprintf(buf, sizeof(buf), "%llu", esp_timer_get_time() / 60000000ULL);
     mqtt_hub_publish(TOPIC_UPTIME, buf, 1, true);
+
+    /* Estado BLE, para diagnosticar la conexión con Gadgetbridge sin cable serie:
+     * "adv" = anunciando de verdad (si el celu igual no lo ve, es del lado del
+     * teléfono); "off"/"errN" = no está anunciando (firmware). */
+    mqtt_hub_publish(TOPIC_BLE, bt_manager_status_str(), 1, true);
 }
 
 static void tick_cb(void *arg) { (void)arg; publish_all(); }

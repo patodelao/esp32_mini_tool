@@ -6,6 +6,7 @@
 #include "bt_manager.h"
 
 #include <string.h>
+#include <stdio.h>
 
 #include "sdkconfig.h"
 #include "esp_log.h"
@@ -64,6 +65,8 @@ static bool s_want_adv = false;      /* intención del usuario */
 static bool s_peer_connected = false;
 static uint16_t s_conn_handle = 0;   /* para poder NOTIFICARLE al telefono */
 static uint8_t s_own_addr_type = 0;
+static bool s_advertising = false;   /* advertising REALMENTE activo (no la intención) */
+static int  s_last_adv_rc = 0;       /* último error del advertising; 0 = OK */
 
 static void start_advertising(void);
 
@@ -72,6 +75,7 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
         s_peer_connected = (event->connect.status == 0);
+        s_advertising = false;   /* al conectar, el controlador detiene el advertising */
         if (s_peer_connected) s_conn_handle = event->connect.conn_handle;
         ESP_LOGI(TAG, "Conexión BLE: %s", s_peer_connected ? "OK" : "falló");
         if (!s_peer_connected && s_want_adv) start_advertising();
@@ -103,6 +107,7 @@ static void start_advertising(void)
     int rc = ble_gap_adv_set_fields(&fields);
     if (rc != 0) {
         ESP_LOGE(TAG, "adv_set_fields rc=%d", rc);
+        s_advertising = false; s_last_adv_rc = rc;
         return;
     }
 
@@ -113,8 +118,10 @@ static void start_advertising(void)
                            &advp, gap_event_cb, NULL);
     if (rc != 0 && rc != BLE_HS_EALREADY) {
         ESP_LOGE(TAG, "adv_start rc=%d", rc);
+        s_advertising = false; s_last_adv_rc = rc;
         return;
     }
+    s_advertising = true; s_last_adv_rc = 0;
     ESP_LOGI(TAG, "Visible como '%s'", s_name);
 }
 
@@ -164,6 +171,7 @@ void bt_manager_start(void)
 void bt_manager_stop(void)
 {
     s_want_adv = false;
+    s_advertising = false;
     if (s_stack_started) {
         ble_gap_adv_stop();
     }
@@ -174,8 +182,25 @@ uint16_t bt_manager_conn_handle(void) { return s_peer_connected ? s_conn_handle 
 bt_state_t bt_manager_state(void)
 {
     if (s_peer_connected) return BT_STATE_CONNECTED;
-    if (s_want_adv && s_stack_started) return BT_STATE_ADVERTISING;
+    if (s_advertising)    return BT_STATE_ADVERTISING;   /* real, no la intención */
     return BT_STATE_OFF;
+}
+
+/* Estado BLE en texto corto para diagnóstico por MQTT (lo publica self_node):
+ * "conn" conectado | "adv" anunciando de verdad | "off" apagado | "errN" el
+ * advertising falló con rc N. Si dice "adv" y el celu igual no lo ve, el
+ * problema es del lado del teléfono (permiso de Ubicación / Bluetooth). */
+const char *bt_manager_status_str(void)
+{
+    if (s_peer_connected) return "conn";
+    if (s_advertising)    return "adv";
+    if (!s_want_adv)      return "off";
+    if (s_last_adv_rc != 0) {
+        static char b[12];
+        snprintf(b, sizeof(b), "err%d", s_last_adv_rc);
+        return b;
+    }
+    return "off";   /* encendido pero aún sincronizando */
 }
 
 void bt_manager_set_name(const char *name)
@@ -201,6 +226,7 @@ void bt_manager_start(void) { ESP_LOGW(TAG, "Firmware sin soporte BT"); }
 void bt_manager_stop(void) {}
 bt_state_t bt_manager_state(void) { return BT_STATE_UNSUPPORTED; }
 uint16_t bt_manager_conn_handle(void) { return 0xFFFF; }
+const char *bt_manager_status_str(void) { return "nobt"; }
 
 void bt_manager_set_name(const char *name)
 {

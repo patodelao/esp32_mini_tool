@@ -33,6 +33,10 @@ void bt_manager_stop(void);
 
 bt_state_t bt_manager_state(void);
 
+/* Estado BLE en texto corto, para diagnóstico por MQTT: "conn" / "adv" / "off"
+ * / "errN" (advertising falló con rc N) / "nobt" (firmware sin BT). */
+const char *bt_manager_status_str(void);
+
 /* Handle de la conexion BLE activa, o 0xFFFF si no hay. Lo usa ble_notify
  * para enviarle mensajes al telefono (musica, buscar telefono). */
 uint16_t bt_manager_conn_handle(void);
