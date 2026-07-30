@@ -356,6 +356,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t event_i
     } else if (base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         xEventGroupSetBits(s_net_events, WIFI_CONNECTED_BIT);
         ESP_LOGI(TAG, "Wi-Fi conectado");
+        /* Publicar la IP apenas la tenemos (y en cada reconexión / cambio de
+           IP), sin esperar la ronda de telemetría. Si el broker aún no arrancó,
+           el guard de publish_ip lo omite y la telemetría lo cubre luego. */
+        publish_ip();
     }
 }
 
@@ -553,6 +557,11 @@ static void alarm_task(void *arg)
         if (telemetry_ms >= 60000) {
             telemetry_ms = 0;
             publish_salud();
+            /* Republicar la IP acá y no solo al arrancar: al boot todavía no hay
+               IP (info.ip.addr == 0) y no se publicaba nunca; además re-siembra
+               el retenido tras un reinicio del broker (vive en RAM). Así el
+               refri aparece con su IP en la tool Nodos, igual que los demás. */
+            publish_ip();
         }
 
         vTaskDelay(pdMS_TO_TICKS(ALARM_BLINK_MS));
