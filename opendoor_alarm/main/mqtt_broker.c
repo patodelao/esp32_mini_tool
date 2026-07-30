@@ -42,6 +42,14 @@ static const char *TAG = "mqtt_broker";
  * PubSubClient 15 s): un cliente sano manda PINGREQ y nunca cae en el corte. */
 #define CONN_IDLE_MS 180000
 
+/* Backpressure: tope del buffer de envío por cliente. Si un suscriptor deja de
+ * leer (medio-muerto, lento), su cola de salida crece sin límite con cada
+ * PUBLISH y presiona el heap. Arriba de esto lo cerramos. Se chequea en el
+ * barrido de ~1 Hz, no en el fanout: una ráfaga legítima (flush de retenidos al
+ * suscribirse) drena en un poll, así que 1 s después solo queda el atascado.
+ * Holgado (16 KB) para no cortar esas ráfagas: los payloads son ≤192 B. */
+#define SEND_CAP     16384
+
 /* Una suscripción de un cliente de red: su conexión + el filtro (con comodines). */
 typedef struct {
     struct mg_connection *c;
@@ -387,19 +395,28 @@ static void drain_txq(void)
         deliver(m.topic, m.payload, m.len, m.retain);
 }
 
-/* Cierra las conexiones mudas hace demasiado (sockets zombie). Marcar
- * is_closing basta: Mongoose las cierra en el próximo poll, dispara MG_EV_CLOSE
- * (que suelta sus suscripciones) y libera el socket. Solo marcamos, no tocamos
- * la lista, así que iterar es seguro. */
-static void reap_idle(void)
+/* Cierra las conexiones enfermas: mudas hace demasiado (socket zombie) o con el
+ * buffer de envío desbordado (cliente que no drena). Marcar is_closing basta:
+ * Mongoose las cierra en el próximo poll, dispara MG_EV_CLOSE (que suelta sus
+ * suscripciones) y libera el socket. Solo marcamos, no tocamos la lista, así que
+ * iterar es seguro. */
+static void reap_unhealthy(void)
 {
     uint64_t now = mg_millis();
     for (struct mg_connection *c = s_mgr.conns; c != NULL; c = c->next) {
-        if (c->is_listening) continue;
+        if (c->is_listening || c->is_closing) continue;
+
         uint64_t last = *(uint64_t *) c->data;
         if (last != 0 && now - last > CONN_IDLE_MS) {
             ESP_LOGW(TAG, "Conexión muda hace %llus: cerrando (socket zombie)",
                      (unsigned long long)((now - last) / 1000));
+            c->is_closing = 1;
+            s_reaped++;
+            continue;
+        }
+        if (c->send.len > SEND_CAP) {
+            ESP_LOGW(TAG, "Cliente lento (%u B sin drenar): cerrando (backpressure)",
+                     (unsigned) c->send.len);
             c->is_closing = 1;
             s_reaped++;
         }
@@ -449,9 +466,9 @@ static void broker_task(void *arg)
         drain_txq();               /* aplica las publicaciones del propio refri */
 
         uint64_t now = mg_millis();
-        if (now - last_reap >= 1000) {   /* barrer zombies ~1 Hz */
+        if (now - last_reap >= 1000) {   /* barrer conexiones enfermas ~1 Hz */
             last_reap = now;
-            reap_idle();
+            reap_unhealthy();
         }
 
         s_alive_us = esp_timer_get_time();   /* latido: el poll sigue avanzando */
