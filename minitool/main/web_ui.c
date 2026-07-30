@@ -252,6 +252,32 @@ static esp_err_t root_get(httpd_req_t *req)
     if (fn == 0) send(req, "<tr><td class='muted'>sin nodos</td></tr>");
     send(req, "</table>");
 
+    /* --- Cámara ---
+     *
+     * El nodo cam sirve su último frame en http://<ip-cam>/foto.jpg. Sacamos su
+     * IP del fleet (retenida en labo/nodo/cam/ip) y embebemos la imagen; el
+     * navegador la carga directo del cam (misma LAN / tailnet). El JS del pie la
+     * refresca cada pocos segundos con un cache-buster, y si el cam no responde
+     * muestra "sin conexión" en vez de una imagen rota. */
+    {
+        char cam_ip[16] = {0};
+        int cn = fleet_count();
+        for (int i = 0; i < cn; i++) {
+            char cid[24];
+            bool con = false;
+            uint32_t cage = 0;
+            if (!fleet_get(i, cid, sizeof(cid), &con, &cage)) continue;
+            if (strcmp(cid, "cam") == 0) { fleet_get_ip(i, cam_ip, sizeof(cam_ip)); break; }
+        }
+        if (cam_ip[0]) {
+            sendf(req, "<h2>Camara</h2>"
+                       "<img id='cam' data-ip='%s' src='http://%s/foto.jpg' "
+                       "style='width:100%%;max-width:480px;border-radius:12px;display:block'>"
+                       "<p id='camoff' class='muted' style='display:none'>camara sin conexion</p>",
+                  cam_ip, cam_ip);
+        }
+    }
+
     /* --- Alertas --- */
     send(req, "<h2>Alertas</h2><table>");
     int an = ui_notify_history_count();
@@ -325,6 +351,19 @@ static esp_err_t root_get(httpd_req_t *req)
           "}"
         "}"
         "setInterval(tick,4000);tick();"
+        /* Cámara: precargar el frame nuevo y recién ahí cambiar el src (sin
+           parpadeo); si falla la carga, mostrar 'sin conexion'. */
+        "function camtick(){"
+          "var c=document.getElementById('cam');if(!c)return;"
+          "var ip=c.getAttribute('data-ip');"
+          "var img=new Image();"
+          "img.onload=function(){c.src=img.src;c.style.display='block';"
+            "var o=document.getElementById('camoff');if(o)o.style.display='none';};"
+          "img.onerror=function(){c.style.display='none';"
+            "var o=document.getElementById('camoff');if(o)o.style.display='block';};"
+          "img.src='http://'+ip+'/foto.jpg?t='+Date.now();"
+        "}"
+        "setInterval(camtick,8000);camtick();"
         "</script>");
 
     send(req, "</body></html>");
