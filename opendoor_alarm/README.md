@@ -1,12 +1,27 @@
 # opendoor_alarm
 
-Proyecto ESP-IDF para alarma de puerta de refrigerador.
+Proyecto ESP-IDF para alarma de puerta de refrigerador **y broker MQTT del
+home-lab**.
 
 El nodo esta **siempre enchufado y despierto**: vigila la puerta de forma
 continua, publica telemetria cada minuto y deja el servidor de actualizacion
 escuchando todo el tiempo. (Antes dormia en deep sleep y despertaba por GPIO
 al abrirse la puerta; eso ahorraba una bateria que no existe y hacia
 imposible actualizarlo o pedirle algo mientras dormia.)
+
+## Broker MQTT del home-lab (2026-07)
+
+Justo por estar siempre encendido, este nodo **hospeda el broker MQTT** de toda
+la flota (antes vivia en la Raspberry Pi, que se apaga o se reutiliza y dejaba a
+la red de sensores sin broker). Corre un broker embebido sobre **Mongoose**
+(`components/mongoose/` + `main/mqtt_broker.c`) escuchando en `0.0.0.0:1883`; el
+resto de los nodos (pieza, cam, minitool) se conectan a `192.168.1.108`.
+
+El propio refri publica su telemetria/puerta y escucha sus comandos **sin abrir
+un cliente TCP a si mismo**: usa la API in-process del broker
+(`mqtt_broker_local_publish` / `mqtt_broker_on_local`). Ya no usa el cliente
+esp-mqtt. Detalles y limitaciones (retenidos en RAM, sin last-will, anonimo) en
+la cabecera de `main/mqtt_broker.h`.
 
 ## Hardware
 
@@ -19,8 +34,9 @@ imposible actualizarlo o pedirle algo mientras dormia.)
 ## Flujo
 
 1. Inicializa GPIO, buzzer y LED.
-2. Conecta a Wi-Fi y a MQTT (`mqtt://broker.hivemq.com`).
-3. Si la puerta está abierta al arrancar, publica `ABIERTO` en `labo/nodo/refri/puerta` (QoS 1).
+2. Conecta a Wi-Fi y **levanta el broker MQTT local** (Mongoose, puerto 1883);
+   publica su presencia y arranca el OTA.
+3. Si la puerta está abierta al arrancar, publica `ABIERTO` en `labo/nodo/refri/puerta`.
 4. Mientras la puerta siga abierta:
    - desde los 20 s: LED alternando rojo/verde.
    - desde los 30 s: buzzer intermitente sincronizado con el parpadeo.

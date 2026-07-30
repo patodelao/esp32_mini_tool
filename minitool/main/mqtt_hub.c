@@ -11,10 +11,12 @@
 
 static const char *TAG = "mqtt_hub";
 
-/* Broker propio en la Raspberry Pi del home-lab (Mosquitto). Se dejó de usar el
- * público broker.hivemq.com: por ahí pasaban hasta las fotos de la cámara, y era
- * un servicio ajeno del que dependía todo. La IP es fija por reserva DHCP. */
-#define MQTT_BROKER_URI "mqtt://192.168.1.100"
+/* Broker primario del home-lab: ahora vive en el nodo del refri (opendoor,
+ * .108), que está siempre enchufado. Antes estaba en la Raspberry Pi (.100),
+ * que se apaga o se reutiliza y dejaba a toda la flota sin broker; el refri, en
+ * cambio, no duerme, así que la red de sensores no depende de la Pi. La Pi ahora
+ * hace de bridge/logging cuando está. IP fija por reserva DHCP. */
+#define MQTT_BROKER_URI "mqtt://192.168.1.108"
 
 /* Credenciales del broker. Sin secrets.h (o con MQTT_USER sin definir) el
  * cliente conecta anónimo, compatible con el broker sin auth. Para migrar a un

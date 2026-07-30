@@ -14,11 +14,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
-#include "mqtt_client.h"
 #include "nvs_flash.h"
 #include "soc/soc_caps.h"
 
 #include "ota_web.h"
+#include "mqtt_broker.h"
 
 /* Credenciales fuera del fuente: van en secrets.h, que está en .gitignore.
  * Copiá secrets.h.example a secrets.h y completá el tuyo. Si falta, el
@@ -62,18 +62,16 @@
 #define RGB_BLUE_GPIO GPIO_NUM_4
 
 #define WIFI_CONNECTED_BIT BIT0
-#define MQTT_CONNECTED_BIT BIT1
 #define WIFI_CONNECT_TIMEOUT_MS 15000
-#define NETWORK_CONNECT_TIMEOUT_MS 15000
 #define LED_START_DELAY_MS 20000
 #define BUZZER_START_DELAY_MS 30000
 #define ALARM_BLINK_MS 250
 #define DOOR_OPEN_HEARTBEAT_MS 5000
 #define DOOR_CLOSED_CONFIRM_MS 3000
 
-/* Broker propio en la Raspberry Pi (Mosquitto), IP fija por reserva DHCP.
- * Antes: broker.hivemq.com (público). */
-#define MQTT_BROKER_URI "mqtt://192.168.1.100"
+/* Este nodo ya no se conecta a un broker externo: HOSPEDA el broker del home-lab
+ * (ver mqtt_broker.c). Publica su telemetría/puerta en su propio broker por la
+ * API in-process, y el resto de la flota se conecta a él por TCP en el 1883. */
 
 /* --- Topics ---------------------------------------------------------------
  * Se mantiene el topic original de la puerta (compatibilidad con el dashboard
@@ -100,7 +98,6 @@ static EventGroupHandle_t s_net_events;
 static bool s_wifi_shutdown_requested;
 static bool s_ws2812_ready;
 static bool s_alarm_escalated;
-static esp_mqtt_client_handle_t s_mqtt_client;
 
 static bool door_is_open(void)
 {
@@ -242,13 +239,13 @@ static void led_startup_test(void)
     rgb_led_set(0, 0, 0);
 }
 
+/* "Listo para publicar" = el broker local está escuchando. El transporte ahora
+ * es in-process (este nodo ES el broker), así que ya no dependemos de un cliente
+ * conectado a nadie: mientras el broker corra, publicar siempre funciona y sus
+ * retenidos quedan guardados para cuando un cliente (el minitool) se suscriba. */
 static bool mqtt_ready(void)
 {
-    if (s_mqtt_client == NULL || s_net_events == NULL) {
-        return false;
-    }
-    EventBits_t bits = xEventGroupGetBits(s_net_events);
-    return (bits & (WIFI_CONNECTED_BIT | MQTT_CONNECTED_BIT)) == (WIFI_CONNECTED_BIT | MQTT_CONNECTED_BIT);
+    return mqtt_broker_running();
 }
 
 /* Estado del nodo para la tool Nodos (retenido: el último valor persiste). */
@@ -257,7 +254,7 @@ static void publish_status(const char *state)
     if (!mqtt_ready()) {
         return;
     }
-    esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_STATUS, state, 0, 1, 1 /*retain*/);
+    mqtt_broker_local_publish(MQTT_TOPIC_STATUS, state, true /*retain*/);
     ESP_LOGI(TAG, "Estado nodo -> %s", state);
 }
 
@@ -270,7 +267,7 @@ static void publish_alert(const char *nivel, const char *msg)
     char payload[128];
     snprintf(payload, sizeof(payload),
              "{\"origen\":\"Refri\",\"nivel\":\"%s\",\"msg\":\"%s\"}", nivel, msg);
-    esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_ALERT, payload, 0, 1, 0);
+    mqtt_broker_local_publish(MQTT_TOPIC_ALERT, payload, false);
     ESP_LOGI(TAG, "Alerta [%s] %s", nivel, msg);
 }
 
@@ -289,19 +286,19 @@ static void publish_salud(void)
        retenido; para entonces la sesion nueva ya publico su "online", asi que
        el "offline" llega despues y pisa el valor bueno. Insistir cada minuto
        lo repara solo, y son 13 bytes. */
-    esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_STATUS, "online", 0, 1, 1 /*retain*/);
+    mqtt_broker_local_publish(MQTT_TOPIC_STATUS, "online", true /*retain*/);
 
     wifi_ap_record_t ap;
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         snprintf(buf, sizeof(buf), "%d", ap.rssi);
-        esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_RSSI, buf, 0, 1, 1 /*retain*/);
+        mqtt_broker_local_publish(MQTT_TOPIC_RSSI, buf, true /*retain*/);
     }
 
     snprintf(buf, sizeof(buf), "%llu", esp_timer_get_time() / 60000000ULL);
-    esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_UPTIME, buf, 0, 1, 1 /*retain*/);
+    mqtt_broker_local_publish(MQTT_TOPIC_UPTIME, buf, true /*retain*/);
 
     snprintf(buf, sizeof(buf), "%.1f", esp_get_free_heap_size() / 1024.0f);
-    esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_HEAP, buf, 0, 1, 1 /*retain*/);
+    mqtt_broker_local_publish(MQTT_TOPIC_HEAP, buf, true /*retain*/);
 }
 
 /* IP con la que se llega al nodo; la muestra la tool Nodos. */
@@ -315,50 +312,25 @@ static void publish_ip(void)
     if (netif && esp_netif_get_ip_info(netif, &info) == ESP_OK && info.ip.addr) {
         char buf[24];
         snprintf(buf, sizeof(buf), IPSTR, IP2STR(&info.ip));
-        esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_IP, buf, 0, 1, 1 /*retain*/);
+        mqtt_broker_local_publish(MQTT_TOPIC_IP, buf, true /*retain*/);
     }
 }
 
-static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+/* Comandos del refri desde la tool Control (labo/nodo/refri/cmd). Antes llegaban
+ * por el evento DATA del cliente MQTT; ahora, como este nodo ES el broker, se
+ * reciben por la API in-process (mqtt_broker_on_local). Corre en la task del
+ * broker: mantenerlo liviano. cmd llega terminado en '\0'. */
+static void on_cmd(const char *topic, const char *cmd, int len)
 {
-    (void)handler_args;
-    (void)base;
-
-    if (event_id == MQTT_EVENT_CONNECTED) {
-        xEventGroupSetBits(s_net_events, MQTT_CONNECTED_BIT);
-        ESP_LOGI(TAG, "MQTT conectado");
-        /* Anunciar presencia y señal en cuanto hay conexión */
-        publish_status("online");
+    (void)topic; (void)len;
+    ESP_LOGI(TAG, "CMD: %s", cmd);
+    if (strcmp(cmd, "reset") == 0 || strcmp(cmd, "reiniciar") == 0) {
+        publish_alert("ok", "Reiniciando el nodo");
+        vTaskDelay(pdMS_TO_TICKS(200));
+        esp_restart();
+    } else if (strcmp(cmd, "leer") == 0) {
         publish_salud();
         publish_ip();
-        esp_mqtt_client_subscribe(s_mqtt_client, MQTT_TOPIC_CMD, 1);
-        /* El servidor de actualizacion se levanta recien con red arriba. */
-        ota_web_start(OTA_PASSWORD, publish_alert);
-    } else if (event_id == MQTT_EVENT_DATA) {
-        esp_mqtt_event_handle_t ev = (esp_mqtt_event_handle_t)event_data;
-        char cmd[24];
-        int n = ev->data_len < (int)sizeof(cmd) - 1 ? ev->data_len : (int)sizeof(cmd) - 1;
-        memcpy(cmd, ev->data, n);
-        cmd[n] = '\0';
-        /* topic tambien viene sin terminar en cero */
-        char topic[64];
-        int tn = ev->topic_len < (int)sizeof(topic) - 1 ? ev->topic_len : (int)sizeof(topic) - 1;
-        memcpy(topic, ev->topic, tn);
-        topic[tn] = '\0';
-
-
-        ESP_LOGI(TAG, "CMD: %s", cmd);
-        if (strcmp(cmd, "reset") == 0 || strcmp(cmd, "reiniciar") == 0) {
-            publish_alert("ok", "Reiniciando el nodo");
-            vTaskDelay(pdMS_TO_TICKS(200));
-            esp_restart();
-        } else if (strcmp(cmd, "leer") == 0) {
-            publish_salud();
-            publish_ip();
-        }
-    } else if (event_id == MQTT_EVENT_DISCONNECTED) {
-        xEventGroupClearBits(s_net_events, MQTT_CONNECTED_BIT);
-        ESP_LOGW(TAG, "MQTT desconectado");
     }
 }
 
@@ -373,7 +345,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t event_i
             ESP_LOGE(TAG, "Error iniciando Wi-Fi: %s", esp_err_to_name(err));
         }
     } else if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        xEventGroupClearBits(s_net_events, WIFI_CONNECTED_BIT | MQTT_CONNECTED_BIT);
+        xEventGroupClearBits(s_net_events, WIFI_CONNECTED_BIT);
         if (!s_wifi_shutdown_requested) {
             ESP_LOGW(TAG, "Wi-Fi desconectado, reintentando");
             esp_err_t err = esp_wifi_connect();
@@ -425,77 +397,25 @@ static void wifi_wait_connected(void)
     }
 }
 
-static void mqtt_start(void)
-{
-    const esp_mqtt_client_config_t mqtt_cfg = {
-        .broker.address.uri = MQTT_BROKER_URI,
-        .credentials.username = MQTT_USER,
-        .credentials.authentication.password = MQTT_PASS,
-        .network.disable_auto_reconnect = false,
-        /* Testamento (LWT): si el nodo cae de golpe (corte de energía, pérdida
-           de Wi-Fi sin cierre limpio), el broker publica "offline" por él. */
-        .session.last_will = {
-            .topic = MQTT_TOPIC_STATUS,
-            .msg = "offline",
-            .msg_len = 0,
-            .qos = 1,
-            .retain = 1,
-        },
-    };
-
-    s_mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
-    ESP_ERROR_CHECK(esp_mqtt_client_register_event(s_mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_mqtt_client_start(s_mqtt_client));
-}
-
-static esp_err_t wait_for_network_ready(void)
-{
-    EventBits_t bits = xEventGroupWaitBits(
-        s_net_events,
-        WIFI_CONNECTED_BIT | MQTT_CONNECTED_BIT,
-        pdFALSE,
-        pdTRUE,
-        pdMS_TO_TICKS(NETWORK_CONNECT_TIMEOUT_MS));
-
-    if ((bits & (WIFI_CONNECTED_BIT | MQTT_CONNECTED_BIT)) != (WIFI_CONNECTED_BIT | MQTT_CONNECTED_BIT)) {
-        return ESP_ERR_TIMEOUT;
-    }
-    return ESP_OK;
-}
-
 static esp_err_t publish_door_state(const char *payload)
 {
-    esp_err_t net_err = wait_for_network_ready();
-    if (net_err != ESP_OK) {
-        ESP_LOGE(TAG, "No se pudo publicar %s: red no lista", payload);
-        return net_err;
-    }
-
-    int msg_id = esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_DOOR, payload, 0, 1, 0);
-    if (msg_id < 0) {
-        ESP_LOGE(TAG, "Falló publish de %s", payload);
+    if (!mqtt_ready()) {
+        ESP_LOGW(TAG, "Broker no listo, no se publica %s", payload);
         return ESP_FAIL;
     }
-
-    ESP_LOGI(TAG, "MQTT publicado [%s] msg_id=%d", payload, msg_id);
+    mqtt_broker_local_publish(MQTT_TOPIC_DOOR, payload, false);
+    ESP_LOGI(TAG, "Puerta publicada [%s]", payload);
     return ESP_OK;
 }
 
 static void publish_door_open_heartbeat(void)
 {
-    EventBits_t bits = xEventGroupGetBits(s_net_events);
-    if ((bits & (WIFI_CONNECTED_BIT | MQTT_CONNECTED_BIT)) != (WIFI_CONNECTED_BIT | MQTT_CONNECTED_BIT)) {
-        ESP_LOGW(TAG, "Heartbeat ABIERTO omitido: MQTT no conectado");
+    if (!mqtt_ready()) {
+        ESP_LOGW(TAG, "Heartbeat ABIERTO omitido: broker no listo");
         return;
     }
-
-    int msg_id = esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_DOOR, "ABIERTO", 0, 1, 0);
-    if (msg_id < 0) {
-        ESP_LOGW(TAG, "Falló heartbeat ABIERTO");
-        return;
-    }
-
-    ESP_LOGI(TAG, "Heartbeat ABIERTO enviado msg_id=%d", msg_id);
+    mqtt_broker_local_publish(MQTT_TOPIC_DOOR, "ABIERTO", false);
+    ESP_LOGI(TAG, "Heartbeat ABIERTO enviado");
 }
 
 static bool confirm_door_closed_for_ms(uint32_t confirm_ms)
@@ -540,10 +460,20 @@ static void alarm_task(void *arg)
 
     wifi_start();
     wifi_wait_connected();
-    mqtt_start();
-    if (wait_for_network_ready() != ESP_OK) {
-        ESP_LOGW(TAG, "Conectividad MQTT no lista al inicio, continuará con reconexión automática");
-    }
+
+    /* Este nodo ES el broker del home-lab: en vez de conectarse a un broker
+       ajeno, levanta el suyo (Mongoose, escuchando en el 1883) y publica su
+       telemetria/puerta ahi mismo por la API in-process. El cmd se registra
+       ANTES de arrancar la task del broker para no competir por su tabla. */
+    mqtt_broker_on_local(MQTT_TOPIC_CMD, on_cmd);
+    mqtt_broker_start();
+
+    /* Anunciar presencia y arrancar el OTA ahora (antes lo disparaba el evento
+       de conexion del cliente MQTT, que ya no existe). */
+    publish_status("online");
+    publish_salud();
+    publish_ip();
+    ota_web_start(OTA_PASSWORD, publish_alert);
 
     /* Vigilancia continua. Este nodo esta enchufado, asi que no duerme: se
        queda mirando la puerta, manda telemetria periodica y deja el servidor
@@ -586,7 +516,7 @@ static void alarm_task(void *arg)
                 if (mqtt_ready()) {
                     char buf[16];
                     snprintf(buf, sizeof(buf), "%u", (unsigned)(open_time_ms / 1000));
-                    esp_mqtt_client_publish(s_mqtt_client, MQTT_TOPIC_OPENSECS, buf, 0, 1, 1);
+                    mqtt_broker_local_publish(MQTT_TOPIC_OPENSECS, buf, true);
                 }
                 ESP_LOGI(TAG, "Puerta CERRADA confirmada");
             } else {

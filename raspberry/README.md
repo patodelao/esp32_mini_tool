@@ -5,10 +5,35 @@ acá para poder redesplegarlo si se muere la SD.
 
 ## Broker MQTT
 
+> **Cambio de topología (2026-07):** el broker **primario** del home-lab ya **no
+> es la Pi**: es el nodo del refri (`opendoor_alarm`, `192.168.1.108`), que está
+> siempre enchufado y corre un broker embebido (Mongoose). Los 4 nodos apuntan
+> ahí. Motivo: la Pi se apaga o se reutiliza, y sin ella se cortaba la captura y
+> la visualización de toda la red de sensores. El refri no duerme, así que la red
+> ya no depende de la Pi. Ver `opendoor_alarm/main/mqtt_broker.c`.
+
 **Mosquitto** (`sudo apt install mosquitto mosquitto-clients`), servicio
 habilitado, escucha en `1883`. Config por defecto de Debian: `persistence true`
-en `/var/lib/mosquitto/`, así que los mensajes retenidos sobreviven a un
-reinicio de la Pi. Es el broker al que apuntan los 4 nodos.
+en `/var/lib/mosquitto/`. Ahora cumple un rol de **bridge/logging**: cuando la Pi
+está prendida, espeja el tráfico del broker de opendoor (persistencia local,
+insumos de la galería, `pi_monitor.py`). Cuando la Pi está apagada, opendoor
+sigue siendo el broker y nadie se entera.
+
+### Bridge hacia el broker de opendoor — `config/etc/mosquitto/conf.d/bridge.conf`
+
+Hace que la Mosquitto de la Pi sea un espejo bidireccional de `labo/#` del broker
+de opendoor. Como beneficio extra, **re-siembra los retenidos** de opendoor si el
+refri se reinicia (OTA) mientras la Pi está viva — opendoor guarda los retenidos
+en RAM y los pierde al rebootear.
+
+```bash
+sudo cp config/etc/mosquitto/conf.d/bridge.conf /etc/mosquitto/conf.d/
+sudo systemctl restart mosquitto
+mosquitto_sub -h localhost -t 'labo/#' -v    # debe ver el tráfico de la flota
+```
+
+`pi_monitor.py` y `cam_capture.py` siguen apuntando a `localhost`: sus mensajes
+entran a la Mosquitto local y el bridge los lleva a opendoor.
 
 ## Seguridad
 

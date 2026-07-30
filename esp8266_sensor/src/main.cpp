@@ -140,9 +140,11 @@
 #define ID_VIEJO               "sala"
 
 // --- MQTT ------------------------------------------------------------------
-// Broker propio en la Raspberry Pi (Mosquitto), IP fija por reserva DHCP.
-// Antes: broker.hivemq.com (publico).
-#define MQTT_BROKER   "192.168.1.100"
+// Broker primario del home-lab: ahora en el nodo del refri (opendoor, .108),
+// que esta siempre enchufado. Antes en la Raspberry Pi (.100), que se apaga y
+// dejaba a la flota sin broker. La Pi hace de bridge/logging cuando esta.
+// IP fija por reserva DHCP.
+#define MQTT_BROKER   "192.168.1.108"
 #define MQTT_PORT     1883
 
 // Credenciales del broker. NULL = anonimo (broker sin auth). Para broker con
