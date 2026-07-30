@@ -29,6 +29,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,6 +50,11 @@ void mqtt_broker_start(void);
 
 /* true una vez que el broker está escuchando. */
 bool mqtt_broker_running(void);
+
+/* Telemetría del broker para publicar como sensores (tool Sensores):
+ * client_count = conexiones TCP vivas ahora; reaped = zombies cerrados en total. */
+int      mqtt_broker_client_count(void);
+uint32_t mqtt_broker_reaped(void);
 
 /* Publica un mensaje en el broker desde este nodo, como si llegara de un cliente:
  * actualiza el retenido (si retain) y lo reparte a los suscriptores que

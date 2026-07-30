@@ -89,6 +89,8 @@
 #define MQTT_TOPIC_RSSI     "labo/sensor/" DEVICE_ID "/rssi"   /* dBm            */
 #define MQTT_TOPIC_UPTIME   "labo/sensor/" DEVICE_ID "/uptime" /* minutos        */
 #define MQTT_TOPIC_HEAP     "labo/sensor/" DEVICE_ID "/heap"   /* kB libres      */
+#define MQTT_TOPIC_CLIENTS  "labo/sensor/" DEVICE_ID "/mqtt_clientes" /* conexiones vivas */
+#define MQTT_TOPIC_ZOMBIES  "labo/sensor/" DEVICE_ID "/mqtt_zombies"  /* zombies reapeados */
 #define MQTT_TOPIC_IP       "labo/nodo/"   DEVICE_ID "/ip"     /* para llegarle  */
 #define MQTT_TOPIC_OPENSECS "labo/sensor/" DEVICE_ID "/abierta_seg"
 #define MQTT_TOPIC_CMD      "labo/nodo/"   DEVICE_ID "/cmd"   /* tool Control */
@@ -299,6 +301,15 @@ static void publish_salud(void)
 
     snprintf(buf, sizeof(buf), "%.1f", esp_get_free_heap_size() / 1024.0f);
     mqtt_broker_local_publish(MQTT_TOPIC_HEAP, buf, true /*retain*/);
+
+    /* Salud del propio broker: cuántas conexiones tiene vivas ahora y cuántos
+       zombies lleva reapeados. Si "clientes" trepa raro o "zombies" sube rápido,
+       hay churn de conexiones — se ve venir en la tool Sensores antes del cuelgue. */
+    snprintf(buf, sizeof(buf), "%d", mqtt_broker_client_count());
+    mqtt_broker_local_publish(MQTT_TOPIC_CLIENTS, buf, true /*retain*/);
+
+    snprintf(buf, sizeof(buf), "%lu", (unsigned long) mqtt_broker_reaped());
+    mqtt_broker_local_publish(MQTT_TOPIC_ZOMBIES, buf, true /*retain*/);
 }
 
 /* IP con la que se llega al nodo; la muestra la tool Nodos. */

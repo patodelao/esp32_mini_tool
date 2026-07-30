@@ -75,14 +75,29 @@ typedef struct {
     bool    retain;
 } txmsg_t;
 
+/* Client-id por conexión, para el takeover: si llega un CONNECT con un id que
+ * ya tiene una conexión viva (típico: un nodo que reinició por OTA y reconecta
+ * antes de que su socket viejo se note muerto), cerramos la vieja en el acto.
+ * Así no hay que esperar al reaping, que queda para los que desaparecen sin
+ * volver. MQTT lo exige, además. */
+#define CID_MAX      40
+typedef struct {
+    struct mg_connection *c;
+    char cid[CID_MAX];
+    bool used;
+} cidmap_t;
+
 static sub_t       s_subs[MAX_SUBS];
 static retained_t  s_ret[MAX_RETAINED];
 static local_sub_t s_local[MAX_LOCAL];
+static cidmap_t    s_cids[MAX_SUBS];   /* una entrada por cliente conectado */
 
 static struct mg_mgr s_mgr;
 static QueueHandle_t  s_txq = NULL;
 static volatile bool  s_running = false;
 static volatile uint64_t s_alive_us = 0;   /* latido de la task del broker (watchdog) */
+static volatile int      s_clients = 0;    /* conexiones TCP vivas (telemetría)    */
+static volatile uint32_t s_reaped  = 0;    /* zombies cerrados por el reaper (tel.) */
 
 /* -------------------------- Coincidencia de topics ------------------------ */
 
@@ -173,6 +188,45 @@ static void subs_drop_conn(struct mg_connection *c)
         if (s_subs[i].used && s_subs[i].c == c) s_subs[i].used = false;
 }
 
+/* ------------------------------- Client-ids ------------------------------- */
+
+static void cid_forget(struct mg_connection *c)
+{
+    for (int i = 0; i < MAX_SUBS; i++)
+        if (s_cids[i].used && s_cids[i].c == c) s_cids[i].used = false;
+}
+
+/* Registra el client-id de esta conexión y cierra cualquier OTRA con el mismo
+ * id (session takeover). Un id vacío (clean session anónima) no dispara
+ * takeover: no hay sesión que reemplazar. */
+static void cid_register(struct mg_connection *c, const char *cid)
+{
+    if (cid && cid[0]) {
+        for (int i = 0; i < MAX_SUBS; i++) {
+            if (s_cids[i].used && s_cids[i].c != c &&
+                strcmp(s_cids[i].cid, cid) == 0) {
+                ESP_LOGW(TAG, "Takeover de '%s': cerrando la conexión anterior", cid);
+                s_cids[i].c->is_closing = 1;   /* Mongoose la cierra en el próximo poll */
+                s_cids[i].used = false;
+            }
+        }
+    }
+    for (int i = 0; i < MAX_SUBS; i++) {       /* ya tiene entrada: actualizar */
+        if (s_cids[i].used && s_cids[i].c == c) {
+            strlcpy(s_cids[i].cid, cid ? cid : "", sizeof(s_cids[i].cid));
+            return;
+        }
+    }
+    for (int i = 0; i < MAX_SUBS; i++) {       /* nueva entrada */
+        if (!s_cids[i].used) {
+            s_cids[i].c = c;
+            strlcpy(s_cids[i].cid, cid ? cid : "", sizeof(s_cids[i].cid));
+            s_cids[i].used = true;
+            return;
+        }
+    }
+}
+
 /* ------------------------------- Reparto ---------------------------------- */
 
 /* Reparte un mensaje a todos los suscriptores (de red y locales) que coincidan,
@@ -217,7 +271,10 @@ static void broker_fn(struct mg_connection *c, int ev, void *ev_data)
 {
     /* Sello de última actividad para el reaping: nace al aceptar y se refresca
      * con cualquier dato entrante (PUBLISH, SUBSCRIBE, y sobre todo PINGREQ). */
-    if (ev == MG_EV_ACCEPT || ev == MG_EV_READ) {
+    if (ev == MG_EV_ACCEPT) {
+        *(uint64_t *) c->data = mg_millis();
+        s_clients++;
+    } else if (ev == MG_EV_READ) {
         *(uint64_t *) c->data = mg_millis();
     }
 
@@ -225,6 +282,31 @@ static void broker_fn(struct mg_connection *c, int ev, void *ev_data)
         struct mg_mqtt_message *mm = (struct mg_mqtt_message *) ev_data;
         switch (mm->cmd) {
             case MQTT_CMD_CONNECT: {
+                /* Extraer el client-id (primer campo del payload) para el
+                 * takeover. Layout tras el header: nombre de protocolo (2B len +
+                 * str), nivel (1B), flags (1B), keepalive (2B), y ya el payload
+                 * arranca con el client-id (2B len + str). */
+                const uint8_t *buf = (const uint8_t *) mm->dgram.buf;
+                size_t dlen = mm->dgram.len;
+                size_t p = 1;                              /* saltar byte de comando */
+                for (int k = 0; k < 4 && p < dlen; k++)    /* saltar remaining-length */
+                    if (!(buf[p++] & 0x80)) break;
+                char cid[CID_MAX] = {0};
+                if (p + 2 <= dlen) {                        /* len del nombre de protocolo */
+                    uint16_t pnl = (uint16_t)((buf[p] << 8) | buf[p + 1]);
+                    p += 2 + pnl + 1 + 1 + 2;              /* + proto + nivel + flags + keepalive */
+                    if (p + 2 <= dlen) {                    /* len del client-id */
+                        uint16_t cl = (uint16_t)((buf[p] << 8) | buf[p + 1]);
+                        p += 2;
+                        if (p + cl <= dlen) {
+                            int n = cl < CID_MAX - 1 ? cl : CID_MAX - 1;
+                            memcpy(cid, buf + p, (size_t) n);
+                            cid[n] = '\0';
+                        }
+                    }
+                }
+                cid_register(c, cid);
+
                 /* Aceptar anónimo (como el allow_anonymous de Mosquitto). CONNACK
                  * con return code 0 = conexión aceptada. */
                 uint8_t connack[2] = { 0, 0 };
@@ -291,6 +373,8 @@ static void broker_fn(struct mg_connection *c, int ev, void *ev_data)
         }
     } else if (ev == MG_EV_CLOSE) {
         subs_drop_conn(c);   /* el cliente se fue: soltar sus suscripciones */
+        cid_forget(c);
+        if (!c->is_listening && s_clients > 0) s_clients--;
     }
 }
 
@@ -317,6 +401,7 @@ static void reap_idle(void)
             ESP_LOGW(TAG, "Conexión muda hace %llus: cerrando (socket zombie)",
                      (unsigned long long)((now - last) / 1000));
             c->is_closing = 1;
+            s_reaped++;
         }
     }
 }
@@ -399,6 +484,9 @@ void mqtt_broker_start(void)
 }
 
 bool mqtt_broker_running(void) { return s_running; }
+
+int      mqtt_broker_client_count(void) { return s_clients; }
+uint32_t mqtt_broker_reaped(void)       { return s_reaped; }
 
 void mqtt_broker_local_publish(const char *topic, const char *payload, bool retain)
 {
