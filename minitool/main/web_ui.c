@@ -66,6 +66,19 @@ static bool key_ok(httpd_req_t *req)
     return strcmp(got, WEB_OTA_KEY) == 0;
 }
 
+/* Id apto para el DOM a partir del id del sensor ("pieza/temp" -> "pieza-temp").
+ * Lo usa el refresco en vivo para encontrar cada celda por getElementById. */
+static void dom_id(const char *id, char *out, int n)
+{
+    int j = 0;
+    for (int i = 0; id[i] && j < n - 1; i++) {
+        char c = id[i];
+        bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+        out[j++] = alnum ? c : '-';
+    }
+    out[j] = '\0';
+}
+
 /* Color CSS según el estado del sensor, el mismo criterio que en pantalla. */
 static const char *state_color(const char *id, uint32_t age)
 {
@@ -132,7 +145,7 @@ static esp_err_t root_get(httpd_req_t *req)
     send(req,
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<meta http-equiv='refresh' content='30'>"   /* se refresca solo */
+        "<meta http-equiv='refresh' content='120'>"  /* fallback: si el JS falla igual se refresca */
         "<title>Home-lab</title><style>"
         "body{background:#0A0E12;color:#DDE6F0;font-family:system-ui,sans-serif;margin:0;padding:16px}"
         "h2{color:#8FA8C8;font-size:15px;font-weight:600;margin:24px 0 10px;"
@@ -153,7 +166,14 @@ static esp_err_t root_get(httpd_req_t *req)
         ".c .u{font-size:14px;color:#7F8C8D;margin-left:3px}"
         ".sp{width:100%;height:56px;display:block}"
         ".f{display:flex;justify-content:space-between;font-size:12px;color:#5A6B7A;margin-top:4px}"
+        ".hd{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}"
+        ".hd .t{color:#DDE6F0;font-size:18px;font-weight:600}"
         "</style></head><body>");
+
+    /* Encabezado con estado del refresco en vivo (lo actualiza el JS del pie). */
+    send(req,
+        "<div class='hd'><span class='t'>Home-lab</span>"
+        "<span id='live' style='font-size:12px;color:#35D07F'>&#9679; en vivo</span></div>");
 
     /* --- Sensores, agrupados por nodo ---
      *
@@ -194,9 +214,13 @@ static esp_err_t root_get(httpd_req_t *req)
             sensor_friendly_name(jid, jname, sizeof(jname));
             const char *color = state_color(jid, jage);
 
+            char jdom[48];
+            dom_id(jid, jdom, sizeof(jdom));
+
             sendf(req, "<div class='c'><div class='n'>%s</div>"
-                       "<div class='b' style='color:%s'>%s<span class='u'>%s</span></div>",
-                  jname, color, jval, sensor_unit(jid));
+                       "<div class='b'><span id='v-%s' style='color:%s'>%s</span>"
+                       "<span class='u'>%s</span></div>",
+                  jname, jdom, color, jval, sensor_unit(jid));
 
             if (!sparkline(req, j, color))
                 send(req, "<div class='muted' style='height:56px'>sin historia todavia</div>");
@@ -207,7 +231,7 @@ static esp_err_t root_get(httpd_req_t *req)
             send(req, "<div class='f'><span>");
             if (rvalid) sendf(req, "hoy %.1f / %.1f", rmn, rmx);
             else        send(req, "24 h");
-            sendf(req, "</span><span>hace %us</span></div></div>", (unsigned)jage);
+            sendf(req, "</span><span id='a-%s'>hace %us</span></div></div>", jdom, (unsigned)jage);
         }
         send(req, "</div>");
     }
@@ -222,8 +246,8 @@ static esp_err_t root_get(httpd_req_t *req)
         if (!fleet_get(i, nid, sizeof(nid), &online, &age)) continue;
         if (!fleet_get_ip(i, ip, sizeof(ip))) ip[0] = '\0';
         sendf(req, "<tr><td>%s <span class='muted'>%s</span></td>"
-                   "<td class='v %s'>%s</td></tr>",
-              nid, ip, online ? "ok" : "off", online ? "online" : "offline");
+                   "<td class='v %s' id='n-%s'>%s</td></tr>",
+              nid, ip, online ? "ok" : "off", nid, online ? "online" : "offline");
     }
     if (fn == 0) send(req, "<tr><td class='muted'>sin nodos</td></tr>");
     send(req, "</table>");
@@ -270,8 +294,81 @@ static esp_err_t root_get(httpd_req_t *req)
           run ? run->label : "?", ver,
           esp_timer_get_time() / 60000000ULL, esp_get_free_heap_size() / 1024.0f);
 
+    /* --- Refresco en vivo ---
+     *
+     * En vez de recargar toda la página cada pocos segundos (parpadeo, datos,
+     * scroll al tope), pedimos /data.json y actualizamos en el lugar solo los
+     * valores y el estado de los nodos. Las curvas (horarias) siguen del render
+     * inicial; el meta-refresh de 120 s queda de red de seguridad si esto falla.
+     * Vanilla, sin librerías. */
+    send(req,
+        "<script>"
+        "async function tick(){"
+          "try{"
+            "const r=await fetch('/data.json',{cache:'no-store'});"
+            "const d=await r.json();"
+            "for(const s of d.sensors){"
+              "const v=document.getElementById('v-'+s.dom);"
+              "if(v){v.textContent=s.v;v.style.color=s.c;}"
+              "const a=document.getElementById('a-'+s.dom);"
+              "if(a){a.textContent='hace '+s.age+'s';}"
+            "}"
+            "for(const n of d.nodes){"
+              "const e=document.getElementById('n-'+n.id);"
+              "if(e){e.textContent=n.on?'online':'offline';e.className='v '+(n.on?'ok':'off');}"
+            "}"
+            "const l=document.getElementById('live');"
+            "if(l){l.textContent='\\u25CF en vivo';l.style.color='#35D07F';}"
+          "}catch(e){"
+            "const l=document.getElementById('live');"
+            "if(l){l.textContent='\\u25CB sin conexion';l.style.color='#E74C3C';}"
+          "}"
+        "}"
+        "setInterval(tick,4000);tick();"
+        "</script>");
+
     send(req, "</body></html>");
     httpd_resp_send_chunk(req, NULL, 0);   /* fin de la respuesta por trozos */
+    return ESP_OK;
+}
+
+/* ------------------------------ Datos en vivo ----------------------------- */
+
+/* JSON compacto que consume el JS de arriba: valores de sensores (con su color
+ * de estado y antigüedad) y estado de los nodos. Deliberadamente NO trae las
+ * curvas ni las alertas: cambian lento y el meta-refresh las cubre. */
+static esp_err_t data_get(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json; charset=utf-8");
+
+    send(req, "{\"sensors\":[");
+    int n = sensor_count();
+    bool first = true;
+    for (int i = 0; i < n; i++) {
+        char id[SENSOR_ID_MAX], val[16], dom[48];
+        uint32_t age = 0;
+        if (!sensor_get(i, id, sizeof(id), val, sizeof(val), &age)) continue;
+        dom_id(id, dom, sizeof(dom));
+        sendf(req, "%s{\"dom\":\"%s\",\"v\":\"%s\",\"c\":\"%s\",\"age\":%u}",
+              first ? "" : ",", dom, val, state_color(id, age), (unsigned)age);
+        first = false;
+    }
+
+    send(req, "],\"nodes\":[");
+    int fn = fleet_count();
+    first = true;
+    for (int i = 0; i < fn; i++) {
+        char nid[24];
+        bool online = false;
+        uint32_t age = 0;
+        if (!fleet_get(i, nid, sizeof(nid), &online, &age)) continue;
+        sendf(req, "%s{\"id\":\"%s\",\"on\":%s}",
+              first ? "" : ",", nid, online ? "true" : "false");
+        first = false;
+    }
+    send(req, "]}");
+
+    httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
 }
 
@@ -386,10 +483,12 @@ esp_err_t web_ui_start(void)
         return err;
     }
 
-    static const httpd_uri_t root   = { .uri = "/",       .method = HTTP_GET,  .handler = root_get };
-    static const httpd_uri_t csv    = { .uri = "/csv",    .method = HTTP_GET,  .handler = csv_get };
-    static const httpd_uri_t update = { .uri = "/update", .method = HTTP_POST, .handler = update_post };
+    static const httpd_uri_t root   = { .uri = "/",          .method = HTTP_GET,  .handler = root_get };
+    static const httpd_uri_t data   = { .uri = "/data.json", .method = HTTP_GET,  .handler = data_get };
+    static const httpd_uri_t csv    = { .uri = "/csv",       .method = HTTP_GET,  .handler = csv_get };
+    static const httpd_uri_t update = { .uri = "/update",    .method = HTTP_POST, .handler = update_post };
     httpd_register_uri_handler(s_server, &root);
+    httpd_register_uri_handler(s_server, &data);
     httpd_register_uri_handler(s_server, &csv);
     httpd_register_uri_handler(s_server, &update);
 
