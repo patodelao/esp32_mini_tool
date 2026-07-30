@@ -23,6 +23,22 @@
 
 #include <string.h>
 
+/* Auth del broker (Fase 2). Si secrets.h define MQTT_USER y MQTT_PASS, el broker
+ * EXIGE esas credenciales en el CONNECT y rechaza al resto (incluido anónimo).
+ * Si no las define, acepta anónimo como hasta ahora: queda DORMIDO hasta que las
+ * pongas en el secrets.h del refri y reflashees. Deben coincidir con las que
+ * mandan los clientes (mismos MQTT_USER/MQTT_PASS en sus secrets). */
+#if defined(__has_include)
+#  if __has_include("secrets.h")
+#    include "secrets.h"
+#  endif
+#endif
+#if defined(MQTT_USER) && defined(MQTT_PASS)
+#  define BROKER_REQUIRE_AUTH 1
+#else
+#  define BROKER_REQUIRE_AUTH 0
+#endif
+
 static const char *TAG = "mqtt_broker";
 
 #define LISTEN_URL   "mqtt://0.0.0.0:1883"
@@ -268,6 +284,60 @@ static void deliver(const char *topic, const uint8_t *payload, int len, bool ret
 
 /* -------------------------- Handler de Mongoose --------------------------- */
 
+/* Lee un string MQTT (2 B big-endian de largo + bytes) desde buf[*p]; lo copia a
+ * out (NUL-terminado, truncado a outsz) si out != NULL, y avanza *p. false si el
+ * paquete no da para tanto. */
+static bool mqtt_rd_str(const uint8_t *buf, size_t dlen, size_t *p, char *out, int outsz)
+{
+    if (*p + 2 > dlen) return false;
+    uint16_t l = (uint16_t)((buf[*p] << 8) | buf[*p + 1]);
+    *p += 2;
+    if (*p + l > dlen) return false;
+    if (out) {
+        int n = l < outsz - 1 ? l : outsz - 1;
+        memcpy(out, buf + *p, (size_t) n);
+        out[n] = '\0';
+    }
+    *p += l;
+    return true;
+}
+
+/* Parsea un paquete CONNECT: client-id y (si vienen, según los connect flags)
+ * usuario y contraseña. Devuelve false si está malformado. */
+static bool parse_connect(const uint8_t *buf, size_t dlen,
+                          char *cid, int cidsz,
+                          char *user, int usersz, bool *has_user,
+                          char *pass, int passsz, bool *has_pass)
+{
+    if (cid)  cid[0]  = '\0';
+    if (user) user[0] = '\0';
+    if (pass) pass[0] = '\0';
+    *has_user = *has_pass = false;
+
+    size_t p = 1;                                /* saltar byte de comando */
+    for (int k = 0; k < 4 && p < dlen; k++)      /* saltar remaining-length */
+        if (!(buf[p++] & 0x80)) break;
+
+    if (!mqtt_rd_str(buf, dlen, &p, NULL, 0)) return false;  /* nombre de protocolo */
+    if (p + 4 > dlen) return false;              /* nivel(1)+flags(1)+keepalive(2) */
+    p += 1;                                      /* nivel de protocolo */
+    uint8_t flags = buf[p++];                    /* connect flags */
+    p += 2;                                      /* keepalive */
+
+    bool has_will = (flags & 0x04) != 0;
+    *has_user     = (flags & 0x80) != 0;
+    *has_pass     = (flags & 0x40) != 0;
+
+    if (!mqtt_rd_str(buf, dlen, &p, cid, cidsz)) return false;   /* client-id */
+    if (has_will) {                                              /* will topic + msg */
+        if (!mqtt_rd_str(buf, dlen, &p, NULL, 0)) return false;
+        if (!mqtt_rd_str(buf, dlen, &p, NULL, 0)) return false;
+    }
+    if (*has_user && !mqtt_rd_str(buf, dlen, &p, user, usersz)) return false;
+    if (*has_pass && !mqtt_rd_str(buf, dlen, &p, pass, passsz)) return false;
+    return true;
+}
+
 /* Envía un paquete de control sin payload variable (CONNACK, SUBACK, PUBACK). */
 static void send_ack(struct mg_connection *c, uint8_t cmd, const uint8_t *body, uint32_t n)
 {
@@ -290,33 +360,28 @@ static void broker_fn(struct mg_connection *c, int ev, void *ev_data)
         struct mg_mqtt_message *mm = (struct mg_mqtt_message *) ev_data;
         switch (mm->cmd) {
             case MQTT_CMD_CONNECT: {
-                /* Extraer el client-id (primer campo del payload) para el
-                 * takeover. Layout tras el header: nombre de protocolo (2B len +
-                 * str), nivel (1B), flags (1B), keepalive (2B), y ya el payload
-                 * arranca con el client-id (2B len + str). */
-                const uint8_t *buf = (const uint8_t *) mm->dgram.buf;
-                size_t dlen = mm->dgram.len;
-                size_t p = 1;                              /* saltar byte de comando */
-                for (int k = 0; k < 4 && p < dlen; k++)    /* saltar remaining-length */
-                    if (!(buf[p++] & 0x80)) break;
-                char cid[CID_MAX] = {0};
-                if (p + 2 <= dlen) {                        /* len del nombre de protocolo */
-                    uint16_t pnl = (uint16_t)((buf[p] << 8) | buf[p + 1]);
-                    p += 2 + pnl + 1 + 1 + 2;              /* + proto + nivel + flags + keepalive */
-                    if (p + 2 <= dlen) {                    /* len del client-id */
-                        uint16_t cl = (uint16_t)((buf[p] << 8) | buf[p + 1]);
-                        p += 2;
-                        if (p + cl <= dlen) {
-                            int n = cl < CID_MAX - 1 ? cl : CID_MAX - 1;
-                            memcpy(cid, buf + p, (size_t) n);
-                            cid[n] = '\0';
-                        }
-                    }
+                char cid[CID_MAX] = {0}, user[48] = {0}, pass[48] = {0};
+                bool has_user = false, has_pass = false;
+                parse_connect((const uint8_t *) mm->dgram.buf, mm->dgram.len,
+                              cid, sizeof(cid), user, sizeof(user), &has_user,
+                              pass, sizeof(pass), &has_pass);
+#if BROKER_REQUIRE_AUTH
+                bool ok = has_user && has_pass &&
+                          strcmp(user, MQTT_USER) == 0 && strcmp(pass, MQTT_PASS) == 0;
+                if (!ok) {
+                    /* CONNACK return code 0x05 = no autorizado; luego cerrar. */
+                    uint8_t connack[2] = { 0, 5 };
+                    send_ack(c, MQTT_CMD_CONNACK, connack, sizeof(connack));
+                    c->is_draining = 1;   /* mandar el CONNACK y cerrar */
+                    ESP_LOGW(TAG, "CONNECT rechazado (auth) client-id='%s'", cid);
+                    break;
                 }
-                cid_register(c, cid);
+#else
+                (void) user; (void) pass; (void) has_user; (void) has_pass;
+#endif
+                cid_register(c, cid);   /* takeover por client-id */
 
-                /* Aceptar anónimo (como el allow_anonymous de Mosquitto). CONNACK
-                 * con return code 0 = conexión aceptada. */
+                /* CONNACK return code 0 = conexión aceptada. */
                 uint8_t connack[2] = { 0, 0 };
                 send_ack(c, MQTT_CMD_CONNACK, connack, sizeof(connack));
                 break;
