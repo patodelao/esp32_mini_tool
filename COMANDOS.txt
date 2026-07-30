@@ -1,0 +1,210 @@
+================================================================================
+  HOME-LAB ESP32 - CHULETA DE COMANDOS
+  Repo: C:\Users\alons\Documents\Proyectos_ESP32\esp32_mini_tool
+================================================================================
+
+LA FLOTA  (IP fija por reserva DHCP)
+--------------------------------------------------------------------------------
+  Nodo      Carpeta          Toolchain    IP             Clave OTA     Binario
+  pieza     esp8266_sensor   PlatformIO   192.168.1.109  pieza-ota     .pio\build\pieza_ota\firmware.bin
+  refri     opendoor_alarm   ESP-IDF S3   192.168.1.108  refri-ota     build\opendoor_alarm.bin   <-- BROKER
+  minitool  minitool         ESP-IDF S3   192.168.1.107  minitool-ota  build\spi_lcd_touch.bin
+  cam       esp32cam         ESP-IDF      192.168.1.104  cam-ota       build\esp32cam.bin
+
+  * BROKER MQTT del home-lab: lo hospeda el REFRI (opendoor) en 192.168.1.108:1883.
+    Todos publican ahi. Si opendoor no esta en la red, NO hay MQTT para nadie.
+    -> Encender/flashear opendoor SIEMPRE PRIMERO.
+
+  * SECRETS (WiFi real) - hace falta ANTES de compilar cada uno:
+      opendoor_alarm\main\secrets.h     minitool\main\secrets.h
+      esp32cam\main\secrets.h           esp8266_sensor\secrets.ini
+    Estan en .gitignore. Sin ellos COMPILA IGUAL pero con SSID "cambiame" y el
+    nodo NO conecta al WiFi (sin ningun error de build). Copiar del .example y
+    completar las 2 lineas de WiFi.
+
+  * TRAMPA al CREAR secrets.h la 1a vez (ESP-IDF): si ya habias compilado sin el,
+    un build normal NO lo toma (ccache devuelve el objeto viejo con "cambiame").
+    La 1a vez, hacer build LIMPIO:   idf.py fullclean ; idf.py build
+    Verificar:   grep -a "TU_SSID" build\<proyecto>.bin   (NO debe estar "cambiame")
+    (Al minitool no lo afecta para el WiFi: usa la red guardada en NVS.)
+
+
+================================================================================
+  0) ACTUALIZAR EL CODIGO (git)   -- en la raiz del repo
+================================================================================
+  cd C:\Users\alons\Documents\Proyectos_ESP32\esp32_mini_tool
+  git pull
+  git status
+
+
+================================================================================
+  ESP-IDF - PREPARAR LA TERMINAL  (PowerShell)
+  Pegar ESTO PRIMERO en cada terminal nueva, antes de cualquier idf.py.
+  El entorno NO persiste entre terminales. Sirve para minitool, refri y cam.
+================================================================================
+  $env:IDF_TOOLS_PATH="C:/Users/alons/Espressif"
+  $env:PATH="C:/Users/alons/Espressif/python_env/idf5.3_py3.11_env/Scripts;" + $env:PATH
+  . "C:/Users/alons/esp/v5.3.2/esp-idf/export.ps1"
+
+  (Si es un checkout nuevo y el link falla por target: idf.py set-target esp32s3)
+
+
+================================================================================
+  REFRI / opendoor_alarm   (ESP-IDF S3)  ***EL BROKER - FLASHEAR PRIMERO***
+  IP 192.168.1.108    OTA key: refri-ota
+================================================================================
+  cd C:\Users\alons\Documents\Proyectos_ESP32\esp32_mini_tool\opendoor_alarm
+
+  Compilar:
+    idf.py build
+
+  Flashear por USB  (reemplaza COM11 por tu puerto):
+    idf.py -p COM11 flash
+
+  Monitor serie  (Ctrl+] para salir) / flash+monitor juntos:
+    idf.py -p COM11 monitor
+    idf.py -p COM11 flash monitor
+
+  Flashear por WiFi (OTA), con el nodo ya en la red:
+    curl -X POST --data-binary "@build/opendoor_alarm.bin" "http://192.168.1.108/update?key=refri-ota"
+
+  Al bootear, en el monitor tiene que aparecer:
+    "Broker MQTT escuchando en mqtt://0.0.0.0:1883"
+  y antes, el WiFi conectando con su IP. Si dice SSID "cambiame" -> falta secrets.h.
+
+
+================================================================================
+  MINITOOL / minitool   (ESP-IDF S3, reloj LVGL)
+  IP 192.168.1.107    OTA key: minitool-ota
+================================================================================
+  cd C:\Users\alons\Documents\Proyectos_ESP32\esp32_mini_tool\minitool
+
+  Compilar:
+    idf.py build
+
+  Flashear por USB:
+    idf.py -p COM11 flash
+
+  Monitor serie:
+    idf.py -p COM11 monitor
+
+  Flashear por WiFi (OTA):
+    curl -X POST --data-binary "@build/spi_lcd_touch.bin" "http://192.168.1.107/update?key=minitool-ota"
+
+  OJO OTA del minitool: su WiFi se degrada tras un rato de encendido y la subida
+  de 1.7 MB se estanca. Flashear por OTA SOLO recien reiniciado (WiFi fresco).
+  Su WiFi de secrets.h es solo respaldo: la red que manda es la de la tool Red (NVS).
+
+
+================================================================================
+  CAM / esp32cam   (ESP-IDF, ESP32 clasico)
+  IP 192.168.1.104    OTA key: cam-ota
+================================================================================
+  cd C:\Users\alons\Documents\Proyectos_ESP32\esp32_mini_tool\esp32cam
+
+  Compilar:
+    idf.py build
+
+  Flashear por USB:
+    idf.py -p COM11 flash
+
+  Monitor serie:
+    idf.py -p COM11 monitor
+
+  Flashear por WiFi (OTA):
+    curl -X POST --data-binary "@build/esp32cam.bin" "http://192.168.1.104/update?key=cam-ota"
+
+  Ver la ultima foto:  http://192.168.1.104/foto.jpg
+
+
+================================================================================
+  PIEZA / esp8266_sensor   (PlatformIO, NO ESP-IDF)
+  IP 192.168.1.109    OTA key: pieza-ota
+================================================================================
+  cd C:\Users\alons\Documents\Proyectos_ESP32\esp32_mini_tool\esp8266_sensor
+
+  Compilar (sin flashear):
+    pio run -e nodemcuv2
+
+  Flashear por USB  (reemplaza COM11 por tu puerto):
+    pio run -e nodemcuv2 -t upload --upload-port COM11
+
+  Monitor serie:
+    pio device monitor -p COM11 -b 115200
+
+  Flashear por WiFi (OTA)  -- OJO: va la IP, NO un COM:
+    pio run -e pieza_ota -t upload --upload-port 192.168.1.109
+
+  * nodemcuv2 = USB ;  pieza_ota = WiFi. Si a un upload OTA le pasas un COM,
+    da "getaddrinfo failed" (espota espera una IP, no un puerto serie).
+  * Si NO ponor -e, PlatformIO corre los DOS entornos; por eso conviene el -e.
+
+
+================================================================================
+  CHEQUEO RAPIDO DE LA FLOTA  (desde el PC, PowerShell)
+================================================================================
+  Ver si el broker (opendoor) escucha y quien esta en la red:
+
+    function P($ip,$port){ try { $c=New-Object Net.Sockets.TcpClient; $a=$c.BeginConnect($ip,$port,$null,$null); if($a.AsyncWaitHandle.WaitOne(1500)){ $c.EndConnect($a); $c.Close(); return 'OK' } else { $c.Close(); return '--' } } catch { return '--' } }
+    "broker 1883 (opendoor): " + (P '192.168.1.108' 1883)
+    "minitool http:          " + (P '192.168.1.107' 80)
+    "cam http:               " + (P '192.168.1.104' 80)
+
+  Ver el trafico MQTT en vivo (si tenes mosquitto-clients instalado):
+    mosquitto_sub -h 192.168.1.108 -t "labo/#" -v
+
+  Desde la Pi (bridge), lo mismo contra localhost:
+    mosquitto_sub -h localhost -t "labo/#" -v
+
+
+================================================================================
+  VER LOS SENSORES EN EL CELULAR  (app MQTT, sin firmware)
+  Gadgetbridge NO sirve para esto (solo grafica fitness). Se usa una app MQTT.
+================================================================================
+  App: "IoT MQTT Panel" (Android, gratis; tiene widget Line Graph).
+  El celu tiene que estar en el MISMO WiFi que los nodos.
+
+  Conexion (Add connection):
+    Broker/Host : 192.168.1.108      (el refri = broker)
+    Port        : 1883
+    Auth        : ninguno (anonimo)   TLS: off
+    Client ID   : cualquiera (ej. celu-alonso)
+
+  Paneles (tipo Line Graph, uno por topic; el valor es un numero -> grafica solo):
+    labo/sensor/pieza/suelo         humedad suelo (%)
+    labo/sensor/pieza/temp          temp aire pieza (C)
+    labo/sensor/pieza/hum           humedad aire (%)
+    labo/sensor/refri/abierta_seg   segundos puerta abierta
+    labo/sensor/pi/temp             temp CPU RetroPi (C)
+    labo/sensor/pi/cpu              uso CPU (%)
+    labo/sensor/<nodo>/rssi         senal WiFi (dBm)   [<nodo>: pieza/refri/pi/minitool/cam]
+    labo/sensor/#                   TODOS los sensores de una
+
+  OJO:
+    - Requiere que el BROKER (opendoor .108) este arriba. Si la app no conecta,
+      revisar opendoor con el "CHEQUEO RAPIDO" de mas arriba.
+    - Los graficos son EN VIVO (mientras la app este abierta). Los retenidos dan
+      el ultimo valor al abrir, no el historial. Para historial real en el celu:
+      Grafana en la Pi leyendo del broker (proyecto aparte).
+
+
+================================================================================
+  RASPBERRY PI (192.168.1.100) - ahora BRIDGE/logging, ya NO el broker
+================================================================================
+  Entrar por SSH (solo por clave):
+    ssh homelab
+    (equivale a: ssh -i C:/Users/alons/.ssh/id_ed25519_homelab pi@192.168.1.100)
+
+  Aplicar el bridge hacia el broker de opendoor:
+    sudo cp bridge.conf /etc/mosquitto/conf.d/    # desde raspberry/config/etc/mosquitto/conf.d/
+    sudo systemctl restart mosquitto
+    mosquitto_sub -h localhost -t "labo/#" -v      # debe ver el trafico de la flota
+
+
+================================================================================
+  ORDEN RECOMENDADO PARA LEVANTAR TODO
+================================================================================
+  1. opendoor (refri) primero  -> es el broker.  Confirmar "Broker MQTT escuchando".
+  2. minitool, pieza, cam       -> conectan al broker de opendoor (.108).
+  3. Pi (opcional)              -> aplicar el bridge para logging/persistencia.
+================================================================================
