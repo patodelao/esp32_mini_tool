@@ -18,3 +18,9 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # El firmware llega por POST en una sola conexión larga: sin esto el servidor
 # corta la subida a la mitad.
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+
+# El refri hospeda el broker MQTT: cada cliente = 1 socket, y comparte el pool
+# con WiFi y el servidor OTA. 10 quedaba corto y bajo reconexiones se agotaba
+# (broker "escuchando pero mudo"). 16 da holgura; el reaping de mqtt_broker.c
+# recicla los zombies de todos modos.
+CONFIG_LWIP_MAX_SOCKETS=16

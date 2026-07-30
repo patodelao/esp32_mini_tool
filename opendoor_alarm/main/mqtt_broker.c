@@ -34,6 +34,14 @@ static const char *TAG = "mqtt_broker";
 #define MAX_RETAINED 80   /* topics retenidos (sensores + status/ip + config) */
 #define MAX_LOCAL     4   /* suscriptores in-process (el cmd del refri, etc.) */
 
+/* Reaping de conexiones mudas. Un cliente que muere sin FIN (corte de energía,
+ * reboot por OTA) deja un socket TCP zombie que lwIP no detecta; con solo
+ * ~10 sockets, unos pocos zombies agotan el pool y el broker queda "escuchando
+ * pero mudo" (no acepta a nadie). Cerramos toda conexión sin tráfico entrante
+ * por más de esto. Debe ser > el keepalive de los clientes (esp-mqtt 120 s,
+ * PubSubClient 15 s): un cliente sano manda PINGREQ y nunca cae en el corte. */
+#define CONN_IDLE_MS 180000
+
 /* Una suscripción de un cliente de red: su conexión + el filtro (con comodines). */
 typedef struct {
     struct mg_connection *c;
@@ -207,6 +215,12 @@ static void send_ack(struct mg_connection *c, uint8_t cmd, const uint8_t *body, 
 
 static void broker_fn(struct mg_connection *c, int ev, void *ev_data)
 {
+    /* Sello de última actividad para el reaping: nace al aceptar y se refresca
+     * con cualquier dato entrante (PUBLISH, SUBSCRIBE, y sobre todo PINGREQ). */
+    if (ev == MG_EV_ACCEPT || ev == MG_EV_READ) {
+        *(uint64_t *) c->data = mg_millis();
+    }
+
     if (ev == MG_EV_MQTT_CMD) {
         struct mg_mqtt_message *mm = (struct mg_mqtt_message *) ev_data;
         switch (mm->cmd) {
@@ -289,6 +303,24 @@ static void drain_txq(void)
         deliver(m.topic, m.payload, m.len, m.retain);
 }
 
+/* Cierra las conexiones mudas hace demasiado (sockets zombie). Marcar
+ * is_closing basta: Mongoose las cierra en el próximo poll, dispara MG_EV_CLOSE
+ * (que suelta sus suscripciones) y libera el socket. Solo marcamos, no tocamos
+ * la lista, así que iterar es seguro. */
+static void reap_idle(void)
+{
+    uint64_t now = mg_millis();
+    for (struct mg_connection *c = s_mgr.conns; c != NULL; c = c->next) {
+        if (c->is_listening) continue;
+        uint64_t last = *(uint64_t *) c->data;
+        if (last != 0 && now - last > CONN_IDLE_MS) {
+            ESP_LOGW(TAG, "Conexión muda hace %llus: cerrando (socket zombie)",
+                     (unsigned long long)((now - last) / 1000));
+            c->is_closing = 1;
+        }
+    }
+}
+
 /* Watchdog del broker. Corre en la task de esp_timer (independiente de la del
  * broker), así que sigue vivo aunque el broker se cuelgue. Si el latido no
  * avanza por un buen rato, mg_mgr_poll dejó de correr (se vio: puerto abierto
@@ -326,9 +358,17 @@ static void broker_task(void *arg)
     if (esp_timer_create(&wd, &wdh) == ESP_OK)
         esp_timer_start_periodic(wdh, 5ULL * 1000000ULL);
 
+    uint64_t last_reap = 0;
     for (;;) {
         mg_mgr_poll(&s_mgr, 50);   /* atiende la red; ≤50 ms de latencia local */
         drain_txq();               /* aplica las publicaciones del propio refri */
+
+        uint64_t now = mg_millis();
+        if (now - last_reap >= 1000) {   /* barrer zombies ~1 Hz */
+            last_reap = now;
+            reap_idle();
+        }
+
         s_alive_us = esp_timer_get_time();   /* latido: el poll sigue avanzando */
     }
 }
