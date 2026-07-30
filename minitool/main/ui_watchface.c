@@ -22,6 +22,7 @@
 #include "wifi_manager.h"
 #include "ui_theme.h"
 #include "bt_manager.h"
+#include "mqtt_hub.h"
 #include "weather_service.h"
 #include "pedometer_service.h"
 #include "sensor_service.h"
@@ -38,6 +39,7 @@ static lv_obj_t *s_time_label = NULL;
 static lv_obj_t *s_date_label = NULL;
 static lv_obj_t *s_wifi_icon = NULL;
 static lv_obj_t *s_bt_icon = NULL;
+static lv_obj_t *s_broker_icon = NULL;   /* ámbar cuando la Pi/broker no está */
 static lv_obj_t *s_wx_emoji = NULL;
 static lv_obj_t *s_wx_temp = NULL;
 static lv_obj_t *s_steps_lbl = NULL;   /* pasos de hoy */
@@ -59,7 +61,7 @@ static void wf_close(void)
     }
     s_arc = NULL;
     s_time_label = s_date_label = NULL;
-    s_wifi_icon = s_bt_icon = NULL;
+    s_wifi_icon = s_bt_icon = s_broker_icon = NULL;
     s_wx_emoji = s_wx_temp = NULL;
     s_steps_lbl = s_soil_lbl = NULL;
 }
@@ -236,6 +238,22 @@ static void wf_tick_cb(lv_timer_t *t)
         lv_obj_add_flag(s_bt_icon, LV_OBJ_FLAG_HIDDEN);
     }
 
+    /* Broker caído: en vez de un cartel de texto tapando la pantalla, un icono
+     * ámbar en la barra de estado, como el de Wi-Fi. Solo importa el caso "hay
+     * red pero la Pi no responde" (sin red ya avisa el icono de Wi-Fi). Un
+     * período de gracia evita que titile en reconexiones, arranque u OTA ajeno.
+     * Con la caratula viva a 1 Hz, s_broker_down cuenta segundos. */
+    static int s_broker_down = 0;
+    if (wifi_manager_is_connected() && !mqtt_hub_connected()) {
+        if (s_broker_down < 8) s_broker_down++;
+    } else {
+        s_broker_down = 0;
+    }
+    if (s_broker_icon) {
+        if (s_broker_down >= 8) lv_obj_clear_flag(s_broker_icon, LV_OBJ_FLAG_HIDDEN);
+        else                    lv_obj_add_flag(s_broker_icon, LV_OBJ_FLAG_HIDDEN);
+    }
+
     render_slot();
     render_soil();
 
@@ -323,6 +341,15 @@ void ui_watchface_show(void)
     lv_label_set_text(s_bt_icon, LV_SYMBOL_BLUETOOTH);
     lv_obj_set_style_text_color(s_bt_icon, lv_color_hex(0x8FA8C8), 0);
     lv_obj_align(s_bt_icon, LV_ALIGN_TOP_MID, 14, 20);
+
+    /* Aviso de broker caído, a la izquierda del Wi-Fi. Oculto salvo cuando la
+     * Pi no responde (lo decide wf_tick_cb). Ámbar: es un aviso, no una falla
+     * del reloj — cada nodo sigue funcionando local sin el broker. */
+    s_broker_icon = lv_label_create(s_wf);
+    lv_label_set_text(s_broker_icon, LV_SYMBOL_WARNING);
+    lv_obj_set_style_text_color(s_broker_icon, lv_color_hex(UI_WARN), 0);
+    lv_obj_align(s_broker_icon, LV_ALIGN_TOP_MID, -42, 20);
+    lv_obj_add_flag(s_broker_icon, LV_OBJ_FLAG_HIDDEN);
 
     /* Fila inferior: pasos y planta. */
     s_steps_lbl = lv_label_create(s_wf);

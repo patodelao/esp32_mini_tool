@@ -64,7 +64,12 @@ static lv_timer_t *s_poll = NULL;
  * base de toques dejo de tener sentido. */
 static lv_obj_t *s_detail_view = NULL;
 static lv_obj_t *s_list_view = NULL;
-static lv_obj_t *s_rows[16];          /* etiquetas de cada fila de la lista */
+/* Una etiqueta por sensor. DEBE dar para TODOS los sensores posibles
+ * (SENSOR_MAX): si el arreglo fuera más chico, list_build() cap­aría s_rows_n
+ * por debajo de sensor_count(), la comparación de list_refresh() nunca cuadraría
+ * y la lista se reconstruiría entera en cada refresco (1 Hz), reseteando el
+ * scroll al tope — no se podía bajar a ver los sensores de más abajo. */
+static lv_obj_t *s_rows[SENSOR_MAX];  /* etiquetas de cada fila de la lista */
 static int       s_rows_n = 0;
 static bool      s_detail_mode = false;
 static lv_timer_t *s_confirm_tmr = NULL;

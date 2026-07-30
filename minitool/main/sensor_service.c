@@ -30,7 +30,7 @@ static const char *TAG = "sensor_svc";
  * así que 8 quedaba corto en cuanto hay dos nodos. Con la Pi auto-monitoreándose
  * (nodo 'pi': temp, uptime, rssi, cpu, disco) la flota pasó de 16, que ya se
  * desbordaba; 24 deja margen. */
-#define MAX_SENSORS   24
+#define MAX_SENSORS   SENSOR_MAX
 #define ID_MAX        SENSOR_ID_MAX
 #define VAL_MAX       16
 

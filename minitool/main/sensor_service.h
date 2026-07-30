@@ -21,6 +21,11 @@ extern "C" {
 #define SENSOR_HIST_H 24   /* horas del histórico largo (uno por hora) */
 #define SENSOR_DAYS    7   /* días de récords guardados (min/max)     */
 #define SENSOR_ID_MAX 32
+/* Tope de sensores que se siguen a la vez. Público para que la UI dimensione
+ * sus arreglos con el MISMO número: si la lista reserva menos filas que las que
+ * puede haber, su conteo nunca cuadra y se reconstruye en cada refresco (borra
+ * el scroll). Ver tool_sensors.c. */
+#define SENSOR_MAX    24
 
 void sensor_service_init(void);
 
