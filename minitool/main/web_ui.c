@@ -90,6 +90,32 @@ static const char *state_color(const char *id, uint32_t age)
     }
 }
 
+/* Color CSS del nivel de una notificación (mismo criterio que la tool Alertas). */
+static const char *notify_color(notify_level_t lv)
+{
+    switch (lv) {
+        case NOTIFY_ALERT:   return "#E74C3C";
+        case NOTIFY_WARNING: return "#F1C40F";
+        case NOTIFY_SUCCESS: return "#35D07F";
+        default:             return "#3498DB";
+    }
+}
+
+/* Envía 's' escapado como contenido de string JSON (sin las comillas). */
+static void send_json_escaped(httpd_req_t *req, const char *s)
+{
+    char out[200];
+    int o = 0;
+    for (int i = 0; s[i] && o < (int)sizeof(out) - 2; i++) {
+        char c = s[i];
+        if (c == '"' || c == '\\')          { out[o++] = '\\'; out[o++] = c; }
+        else if (c == '\n')                 { out[o++] = '\\'; out[o++] = 'n'; }
+        else if ((unsigned char)c >= 0x20)  { out[o++] = c; }  /* descartar otros control */
+    }
+    out[o] = '\0';
+    send(req, out);
+}
+
 /* ------------------------------ Gráficos SVG ------------------------------
  *
  * El panel mostraba un número por sensor. Un número solo no dice nada: 18.9 °C
@@ -278,8 +304,8 @@ static esp_err_t root_get(httpd_req_t *req)
         }
     }
 
-    /* --- Alertas --- */
-    send(req, "<h2>Alertas</h2><table>");
+    /* --- Alertas (la tabla la refresca en vivo el JS del pie) --- */
+    send(req, "<h2>Alertas</h2><table id='alerts'>");
     int an = ui_notify_history_count();
     for (int i = 0; i < an; i++) {
         notify_record_t r;
@@ -290,8 +316,8 @@ static esp_err_t root_get(httpd_req_t *req)
             localtime_r(&r.ts, &tm);
             snprintf(hora, sizeof(hora), "%02d:%02d", tm.tm_hour, tm.tm_min);
         }
-        sendf(req, "<tr><td class='muted'>%s</td><td>%s</td>"
-                   "<td class='v muted'>%s</td></tr>", hora, r.source, r.msg);
+        sendf(req, "<tr><td class='muted'>%s</td><td style='color:%s'>%s</td>"
+                   "<td class='v muted'>%s</td></tr>", hora, notify_color(r.level), r.source, r.msg);
     }
     if (an == 0) send(req, "<tr><td class='muted'>sin alertas</td></tr>");
     send(req, "</table>");
@@ -329,6 +355,7 @@ static esp_err_t root_get(httpd_req_t *req)
      * Vanilla, sin librerías. */
     send(req,
         "<script>"
+        "function esc(s){return (s+'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}"
         "async function tick(){"
           "try{"
             "const r=await fetch('/data.json',{cache:'no-store'});"
@@ -343,6 +370,13 @@ static esp_err_t root_get(httpd_req_t *req)
               "const e=document.getElementById('n-'+n.id);"
               "if(e){e.textContent=n.on?'online':'offline';e.className='v '+(n.on?'ok':'off');}"
             "}"
+            "var at=document.getElementById('alerts');"
+            "if(at&&d.alerts){var h='';"
+              "if(d.alerts.length===0){h=\"<tr><td class='muted'>sin alertas</td></tr>\";}"
+              "else{for(const a of d.alerts){"
+                "h+=\"<tr><td class='muted'>\"+a.t+\"</td><td style='color:\"+a.c+\"'>\"+esc(a.s)"
+                   "+\"</td><td class='v muted'>\"+esc(a.m)+\"</td></tr>\";}}"
+              "at.innerHTML=h;}"
             "const l=document.getElementById('live');"
             "if(l){l.textContent='\\u25CF en vivo';l.style.color='#35D07F';}"
           "}catch(e){"
@@ -403,6 +437,27 @@ static esp_err_t data_get(httpd_req_t *req)
         if (!fleet_get(i, nid, sizeof(nid), &online, &age)) continue;
         sendf(req, "%s{\"id\":\"%s\",\"on\":%s}",
               first ? "" : ",", nid, online ? "true" : "false");
+        first = false;
+    }
+
+    send(req, "],\"alerts\":[");
+    int an = ui_notify_history_count();
+    first = true;
+    for (int i = 0; i < an; i++) {
+        notify_record_t r;
+        if (!ui_notify_history_get(i, &r)) continue;
+        char hora[8] = "--:--";
+        if (r.ts > 0) {
+            struct tm tm;
+            localtime_r(&r.ts, &tm);
+            snprintf(hora, sizeof(hora), "%02d:%02d", tm.tm_hour, tm.tm_min);
+        }
+        send(req, first ? "{" : ",{");
+        sendf(req, "\"t\":\"%s\",\"c\":\"%s\",\"s\":\"", hora, notify_color(r.level));
+        send_json_escaped(req, r.source);
+        send(req, "\",\"m\":\"");
+        send_json_escaped(req, r.msg);
+        send(req, "\"}");
         first = false;
     }
     send(req, "]}");
