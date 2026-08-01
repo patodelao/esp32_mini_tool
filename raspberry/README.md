@@ -176,6 +176,29 @@ sudo cp monitor/homelab-monitor.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now homelab-monitor
 ```
 
+## Push de alertas al celu — `push/homelab_push.py`
+
+Reenvía el bus `labo/alerta/#` a tu teléfono como notificación push vía
+[ntfy.sh](https://ntfy.sh), estés donde estés. Es lo mismo que el toast del
+minitool, pero puenteado a la nube para que salga de la LAN — el eslabón que le
+faltaba a "monitorear desde afuera" (Tailscale te deja entrar; esto te avisa).
+Como el bus es multicanal, cubre refri, pieza y lo que se sume, sin tocar nada.
+
+### Instalación
+
+```bash
+pip3 install paho-mqtt requests
+cp push/homelab_push.py /home/pi/homelab/
+cp push/push.env.example /home/pi/homelab/push.env   # y editá tus valores
+sudo cp push/homelab-push.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now homelab-push
+journalctl -u homelab-push -f
+```
+
+En `push.env`: `MQTT_USER`/`MQTT_PASS` (los de la flota), y `NTFY_URL` con un
+topic largo e impredecible (es tu clave). En el celu: app **ntfy** suscripta al
+mismo topic. `MIN_LEVEL` filtra por nivel (alarma/aviso/ok).
+
 ## Estructura de esta carpeta
 
 ```

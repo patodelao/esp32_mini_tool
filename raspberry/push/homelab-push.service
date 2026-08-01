@@ -1,0 +1,18 @@
+[Unit]
+Description=Home-lab push de alertas a ntfy (celu)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+# Credenciales y topic NO van en git: se leen de un archivo de entorno que creás
+# en la Pi (ver push.env.example). Copiá push.env.example a /home/pi/homelab/push.env
+# y completá tus valores.
+EnvironmentFile=/home/pi/homelab/push.env
+ExecStart=/usr/bin/python3 /home/pi/homelab/homelab_push.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
