@@ -25,6 +25,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "driver/gpio.h"
 #include "esp_err.h"
@@ -106,6 +107,18 @@
 static const char *TAG = "cam";
 static EventGroupHandle_t s_net_events;
 static esp_mqtt_client_handle_t s_mqtt;
+
+/* Estado del timelapse (lo maneja el agente de la Pi; acá se refleja para
+ * mostrarlo en el panel web del cam). */
+static bool s_tl_active = false;
+static int  s_tl_min = 10;
+
+/* Publicación MQTT para los controles del panel web (encender/apagar el
+ * timelapse escribiendo la config retenida que consume la Pi). */
+static void cam_publish(const char *topic, const char *payload, bool retain)
+{
+    if (s_mqtt) esp_mqtt_client_publish(s_mqtt, topic, payload, 0, 1, retain ? 1 : 0);
+}
 
 static bool mqtt_ready(void)
 {
@@ -203,24 +216,44 @@ static void mqtt_event_handler(void *args, esp_event_base_t base, int32_t id, vo
         publish_ip();
         publish_ambiente();
         esp_mqtt_client_subscribe(s_mqtt, MQTT_TOPIC_CMD, 1);
-        /* El servidor de OTA se levanta recién con red arriba. */
+        /* El servidor de OTA/panel se levanta recién con red arriba. */
         ota_web_start(OTA_PASSWORD, publish_alert);
+        ota_web_set_publish(cam_publish);   /* el panel controla el timelapse */
+        /* Estado del timelapse: al suscribirnos, el broker manda la config
+           retenida y el panel queda sincronizado con lo que ve la Pi. */
+        esp_mqtt_client_subscribe(s_mqtt, "labo/config/cam/captura/#", 1);
     } else if (id == MQTT_EVENT_DATA) {
         esp_mqtt_event_handle_t ev = (esp_mqtt_event_handle_t)data;
-        char cmd[24];
-        int n = ev->data_len < (int)sizeof(cmd) - 1 ? ev->data_len : (int)sizeof(cmd) - 1;
-        memcpy(cmd, ev->data, n);
-        cmd[n] = '\0';
+        char topic[64];
+        int tn = ev->topic_len < (int)sizeof(topic) - 1 ? ev->topic_len : (int)sizeof(topic) - 1;
+        memcpy(topic, ev->topic, tn);
+        topic[tn] = '\0';
+        char val[24];
+        int n = ev->data_len < (int)sizeof(val) - 1 ? ev->data_len : (int)sizeof(val) - 1;
+        memcpy(val, ev->data, n);
+        val[n] = '\0';
 
-        ESP_LOGI(TAG, "CMD: %s", cmd);
-        if (strcmp(cmd, "reset") == 0 || strcmp(cmd, "reiniciar") == 0) {
-            publish_alert("ok", "Reiniciando el nodo");
-            vTaskDelay(pdMS_TO_TICKS(200));
-            esp_restart();
-        } else if (strcmp(cmd, "leer") == 0) {
-            publish_salud();
-            publish_ip();
-            publish_ambiente();
+        if (strcmp(topic, MQTT_TOPIC_CMD) == 0) {
+            ESP_LOGI(TAG, "CMD: %s", val);
+            if (strcmp(val, "reset") == 0 || strcmp(val, "reiniciar") == 0) {
+                publish_alert("ok", "Reiniciando el nodo");
+                vTaskDelay(pdMS_TO_TICKS(200));
+                esp_restart();
+            } else if (strcmp(val, "leer") == 0) {
+                publish_salud();
+                publish_ip();
+                publish_ambiente();
+            }
+        } else if (strncmp(topic, "labo/config/cam/captura/", 24) == 0) {
+            const char *leaf = topic + 24;
+            if (strcmp(leaf, "activo") == 0) {
+                s_tl_active = (strcmp(val, "1") == 0 || strcmp(val, "true") == 0 ||
+                               strcmp(val, "on") == 0 || strcmp(val, "ON") == 0);
+                ota_web_set_timelapse(s_tl_active, s_tl_min);
+            } else if (strcmp(leaf, "intervalo") == 0) {
+                int m = atoi(val);
+                if (m >= 1) { s_tl_min = m; ota_web_set_timelapse(s_tl_active, s_tl_min); }
+            }
         }
     } else if (id == MQTT_EVENT_DISCONNECTED) {
         xEventGroupClearBits(s_net_events, MQTT_CONNECTED_BIT);

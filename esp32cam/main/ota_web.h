@@ -27,6 +27,7 @@
  */
 #pragma once
 
+#include <stdbool.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -36,9 +37,22 @@ extern "C" {
 /* Aviso al empezar/terminar una actualización, para publicarlo al bus. */
 typedef void (*ota_web_notify_t)(const char *nivel, const char *msg);
 
-/* Arranca el servidor (idempotente). 'key' es la clave que hay que pasar en
- * la URL; si es NULL o vacía, no se acepta ninguna subida. */
+/* Publicar en MQTT desde los controles de la página (el panel de control usa
+ * esto para encender/apagar el timelapse escribiendo la config que consume la
+ * Pi). La implementa main.c, que es quien tiene el cliente MQTT. */
+typedef void (*ota_web_publish_t)(const char *topic, const char *payload, bool retain);
+
+/* Arranca los servidores (idempotente): el de control/OTA en el puerto 80 y uno
+ * aparte para el stream MJPEG en el 81 (así el stream no bloquea el OTA ni el
+ * panel). 'key' es la clave de la URL de update; NULL/vacía = no se acepta subida. */
 esp_err_t ota_web_start(const char *key, ota_web_notify_t notify);
+
+/* Conecta la función de publicación MQTT (llamar tras ota_web_start). */
+void ota_web_set_publish(ota_web_publish_t publish);
+
+/* Informa el estado actual del timelapse (lo lee main.c de la config retenida),
+ * para mostrarlo en el panel. */
+void ota_web_set_timelapse(bool active, int minutes);
 
 #ifdef __cplusplus
 }
