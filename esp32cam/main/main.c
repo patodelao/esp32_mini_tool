@@ -216,9 +216,6 @@ static void mqtt_event_handler(void *args, esp_event_base_t base, int32_t id, vo
         publish_ip();
         publish_ambiente();
         esp_mqtt_client_subscribe(s_mqtt, MQTT_TOPIC_CMD, 1);
-        /* El servidor de OTA/panel se levanta recién con red arriba. */
-        ota_web_start(OTA_PASSWORD, publish_alert);
-        ota_web_set_publish(cam_publish);   /* el panel controla el timelapse */
         /* Estado del timelapse: al suscribirnos, el broker manda la config
            retenida y el panel queda sincronizado con lo que ve la Pi. */
         esp_mqtt_client_subscribe(s_mqtt, "labo/config/cam/captura/#", 1);
@@ -275,6 +272,13 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         xEventGroupSetBits(s_net_events, WIFI_CONNECTED_BIT);
         ESP_LOGI(TAG, "Wi-Fi conectado");
+        /* El servidor de panel/OTA se levanta con la RED, NO con MQTT: así el
+           nodo sigue actualizable por OTA aunque el broker lo rechace (p.ej. una
+           clave MQTT equivocada). Sin esto, una clave mal quedaba en deadlock —
+           MQTT no conecta -> no arranca el OTA -> no se puede reflashear salvo
+           por cable. (Idempotente: si ya está arriba, no hace nada.) */
+        ota_web_start(OTA_PASSWORD, publish_alert);
+        ota_web_set_publish(cam_publish);
     }
 }
 
