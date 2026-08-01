@@ -5,6 +5,7 @@
  */
 #include "tool.h"
 
+extern const tool_t tool_casa;      /* Resumen del hogar */
 extern const tool_t tool_clock;     /* Hora + Crono + Timer */
 extern const tool_t tool_level;
 extern const tool_t tool_gyro;
@@ -31,6 +32,7 @@ extern const tool_t tool_phone;
 extern const tool_t tool_alarm;
 
 const tool_t *const g_tools[] = {
+    &tool_casa,
     &tool_clock,
     &tool_alarm,
     &tool_level,
