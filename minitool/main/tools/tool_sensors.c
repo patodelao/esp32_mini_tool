@@ -64,12 +64,15 @@ static lv_timer_t *s_poll = NULL;
  * base de toques dejo de tener sentido. */
 static lv_obj_t *s_detail_view = NULL;
 static lv_obj_t *s_list_view = NULL;
-/* Una etiqueta por sensor. DEBE dar para TODOS los sensores posibles
- * (SENSOR_MAX): si el arreglo fuera más chico, list_build() cap­aría s_rows_n
- * por debajo de sensor_count(), la comparación de list_refresh() nunca cuadraría
- * y la lista se reconstruiría entera en cada refresco (1 Hz), reseteando el
- * scroll al tope — no se podía bajar a ver los sensores de más abajo. */
-static lv_obj_t *s_rows[SENSOR_MAX];  /* etiquetas de cada fila de la lista */
+/* Filas de la lista, una por sensor. Los arreglos DEBEN dar para TODOS los
+ * sensores posibles (SENSOR_MAX): si fueran más chicos, list_build() caparía
+ * s_rows_n por debajo de sensor_count(), la comparación de list_refresh() nunca
+ * cuadraría y la lista se reconstruiría en cada refresco (1 Hz), reseteando el
+ * scroll — no se podía bajar a ver los de más abajo. */
+static lv_obj_t *s_row_val[SENSOR_MAX];    /* label del valor de cada fila     */
+static lv_obj_t *s_row_dot[SENSOR_MAX];    /* punto de estado de cada fila     */
+static lv_obj_t *s_row_trend[SENSOR_MAX];  /* flecha de tendencia de cada fila */
+static int       s_row_sensor[SENSOR_MAX]; /* índice de sensor de cada fila    */
 static int       s_rows_n = 0;
 static bool      s_detail_mode = false;
 static lv_timer_t *s_confirm_tmr = NULL;
@@ -572,26 +575,6 @@ static void poll_cb(lv_timer_t *t)
 
 /* ------------------------------ Vista de lista ---------------------------- */
 
-/* Texto de una fila: "Suelo Pieza      96 %". */
-static void row_text(lv_obj_t *lbl, int idx)
-{
-    char id[SENSOR_ID_MAX], val[16], name[40], buf[64];
-    uint32_t age = 0;
-    if (!sensor_get(idx, id, sizeof(id), val, sizeof(val), &age)) return;
-
-    sensor_friendly_name(id, name, sizeof(name));
-    const char *u = sensor_unit(id);
-    snprintf(buf, sizeof(buf), "%s   %s %s", name, val, u);
-    lv_label_set_text(lbl, buf);
-
-    /* Mismo codigo de color que el detalle: rojo fuera de umbral, gris viejo. */
-    sensor_alert_state_t st = sensor_alert_state(id);
-    lv_color_t c = lv_color_hex(0xDDE6F0);
-    if (age > sensor_alert_stale_limit(id))                             c = lv_color_hex(0x5A6B7A);
-    else if (st == SENSOR_ALERT_LOW || st == SENSOR_ALERT_HIGH)         c = lv_color_hex(0xE74C3C);
-    lv_obj_set_style_text_color(lbl, c, 0);
-}
-
 static void row_click_cb(lv_event_t *e)
 {
     s_sel = (int)(intptr_t)lv_event_get_user_data(e);
@@ -599,9 +582,153 @@ static void row_click_cb(lv_event_t *e)
     show_detail(true);
 }
 
-/* Reconstruye la lista. Solo se llama cuando cambia la CANTIDAD de sensores;
- * los valores se refrescan en el lugar, para no romper el desplazamiento
- * mientras se lee. */
+/* Color del punto de estado: gris viejo / rojo fuera de umbral / verde ok. */
+static lv_color_t status_color(const char *id, uint32_t age)
+{
+    if (age > sensor_alert_stale_limit(id)) return lv_color_hex(0x5A6B7A);
+    sensor_alert_state_t st = sensor_alert_state(id);
+    if (st == SENSOR_ALERT_LOW || st == SENSOR_ALERT_HIGH) return lv_color_hex(0xE74C3C);
+    return lv_color_hex(0x35D07F);
+}
+
+/* Tendencia del sensor a partir del histórico reciente: -1 baja / 0 estable /
+ * +1 sube. Compara el promedio de las primeras lecturas del histórico con el de
+ * las últimas; la zona muerta (2% del rango del sensor) evita que el ruido lo
+ * haga temblar. */
+static int trend_of(int idx, const char *id)
+{
+    float h[SENSOR_HIST];
+    int hn = sensor_history(idx, h, SENSOR_HIST);
+    if (hn < 3) return 0;
+
+    int w = hn / 3;
+    if (w < 1) w = 1;
+    if (w > 5) w = 5;
+
+    float recent = 0, older = 0;
+    for (int i = 0; i < w; i++) { recent += h[hn - 1 - i]; older += h[i]; }
+    recent /= w;
+    older  /= w;
+
+    float step, rmin, rmax;
+    sensor_alert_edit_hints(id, &step, &rmin, &rmax);
+    float eps = (rmax - rmin) * 0.02f;
+    if (eps < 0.05f) eps = 0.05f;
+
+    float d = recent - older;
+    if (d >  eps) return 1;
+    if (d < -eps) return -1;
+    return 0;
+}
+
+/* Refresca una fila en el lugar (valor + color del punto y del valor + flecha
+ * de tendencia), sin reconstruir, para no romper el scroll mientras se lee. */
+static void row_refresh(int r)
+{
+    int idx = s_row_sensor[r];
+    char id[SENSOR_ID_MAX], val[16];
+    uint32_t age = 0;
+    if (!sensor_get(idx, id, sizeof(id), val, sizeof(val), &age)) return;
+
+    bool stale = (age > sensor_alert_stale_limit(id));
+    sensor_alert_state_t st = sensor_alert_state(id);
+    bool oor = (st == SENSOR_ALERT_LOW || st == SENSOR_ALERT_HIGH);
+
+    const char *u = sensor_unit(id);
+    if (s_row_val[r]) {
+        char buf[24];
+        if (u[0]) snprintf(buf, sizeof(buf), "%s %s", val, u);
+        else      snprintf(buf, sizeof(buf), "%s", val);
+        lv_label_set_text(s_row_val[r], buf);
+
+        lv_color_t vc = lv_color_hex(0xDDE6F0);
+        if (stale)    vc = lv_color_hex(0x5A6B7A);
+        else if (oor) vc = lv_color_hex(0xE74C3C);
+        lv_obj_set_style_text_color(s_row_val[r], vc, 0);
+    }
+    if (s_row_dot[r]) lv_obj_set_style_bg_color(s_row_dot[r], status_color(id, age), 0);
+
+    /* Flecha: subiendo (cálido) / bajando (frío) / estable (guion gris). Si el
+     * sensor está viejo, estable, para no mostrar una tendencia fantasma. */
+    if (s_row_trend[r]) {
+        int tr = stale ? 0 : trend_of(idx, id);
+        const char *sym = (tr > 0) ? LV_SYMBOL_UP : (tr < 0) ? LV_SYMBOL_DOWN : "-";
+        lv_color_t tc = (tr > 0) ? lv_color_hex(0xE0894A)
+                       : (tr < 0) ? lv_color_hex(0x4AA8FF)
+                                  : lv_color_hex(0x4A5866);
+        lv_label_set_text(s_row_trend[r], sym);
+        lv_obj_set_style_text_color(s_row_trend[r], tc, 0);
+    }
+}
+
+/* Crea una fila-sensor (píldora con punto de estado + magnitud + valor). */
+static void row_create(int sensor_idx, const char *id)
+{
+    int cap = (int)(sizeof(s_row_val) / sizeof(s_row_val[0]));
+    if (s_rows_n >= cap) return;
+
+    lv_obj_t *btn = lv_btn_create(s_list_view);
+    lv_obj_set_size(btn, 200, 38);
+    lv_obj_set_style_radius(btn, 19, 0);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(UI_CARD), 0);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(UI_CARD_PRESS), LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_add_event_cb(btn, row_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)sensor_idx);
+
+    lv_obj_t *dot = lv_obj_create(btn);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, 12, 12);
+    lv_obj_align(dot, LV_ALIGN_LEFT_MID, 6, 0);
+    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(dot, lv_color_hex(0x35D07F), 0);
+    lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Nombre = magnitud (el 1er token del nombre legible; el nodo ya va en el
+     * encabezado, así "Temp Pieza" queda solo "Temp"). */
+    char name[40], mag[24];
+    sensor_friendly_name(id, name, sizeof(name));
+    int j = 0;
+    for (; name[j] && name[j] != ' ' && j < (int)sizeof(mag) - 1; j++) mag[j] = name[j];
+    mag[j] = '\0';
+    lv_obj_t *nm = lv_label_create(btn);
+    lv_obj_set_style_text_font(nm, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(nm, lv_color_hex(0xB8C4D0), 0);
+    lv_label_set_text(nm, mag);
+    lv_obj_align(nm, LV_ALIGN_LEFT_MID, 26, 0);
+
+    lv_obj_t *vl = lv_label_create(btn);
+    lv_obj_set_style_text_font(vl, &lv_font_montserrat_16, 0);
+    lv_obj_align(vl, LV_ALIGN_RIGHT_MID, -30, 0);   /* deja lugar a la flecha */
+
+    /* Flecha de tendencia, pegada al borde derecho. */
+    lv_obj_t *tr = lv_label_create(btn);
+    lv_obj_set_style_text_font(tr, &lv_font_montserrat_14, 0);
+    lv_label_set_text(tr, "");
+    lv_obj_align(tr, LV_ALIGN_RIGHT_MID, -10, 0);
+
+    s_row_val[s_rows_n]    = vl;
+    s_row_dot[s_rows_n]    = dot;
+    s_row_trend[s_rows_n]  = tr;
+    s_row_sensor[s_rows_n] = sensor_idx;
+    s_rows_n++;
+}
+
+/* Encabezado de un nodo ("Pieza", "Refri", ...). */
+static void header_create(const char *node, bool first)
+{
+    lv_obj_t *hdr = lv_label_create(s_list_view);
+    lv_obj_set_width(hdr, 196);
+    lv_obj_set_style_text_align(hdr, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_font(hdr, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(hdr, lv_color_hex(0x8FA8C8), 0);
+    lv_obj_set_style_pad_left(hdr, 8, 0);
+    lv_obj_set_style_pad_top(hdr, first ? 0 : 10, 0);   /* aire entre grupos */
+    lv_label_set_text(hdr, sensor_node_label(node));
+}
+
+/* Reconstruye la lista AGRUPADA por nodo. Solo cuando cambia la CANTIDAD de
+ * sensores; los valores se refrescan en el lugar (row_refresh). */
 static void list_build(void)
 {
     if (!s_list_view) return;
@@ -609,34 +736,41 @@ static void list_build(void)
     s_rows_n = 0;
 
     int n = sensor_count();
-    for (int i = 0; i < n && i < (int)(sizeof(s_rows) / sizeof(s_rows[0])); i++) {
-        lv_obj_t *btn = lv_btn_create(s_list_view);
-        lv_obj_set_size(btn, 182, 40);
-        lv_obj_set_style_radius(btn, 20, 0);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(UI_CARD), 0);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(UI_CARD_PRESS), LV_STATE_PRESSED);
-        lv_obj_set_style_shadow_width(btn, 0, 0);
-        lv_obj_add_event_cb(btn, row_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
-        lv_obj_t *lbl = lv_label_create(btn);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-        lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(lbl, LV_PCT(100));
-        lv_obj_center(lbl);
-        s_rows[s_rows_n++] = lbl;
+    /* Nodos únicos, en orden de aparición. */
+    char nodes[SENSOR_MAX][24];
+    int nn = 0;
+    for (int i = 0; i < n; i++) {
+        char id[SENSOR_ID_MAX], node[24];
+        if (!sensor_get(i, id, sizeof(id), NULL, 0, NULL)) continue;
+        sensor_node_id(id, node, sizeof(node));
+        bool seen = false;
+        for (int k = 0; k < nn; k++) if (strcmp(nodes[k], node) == 0) { seen = true; break; }
+        if (!seen && nn < SENSOR_MAX) { snprintf(nodes[nn], sizeof(nodes[0]), "%s", node); nn++; }
     }
+
+    /* Un encabezado por nodo, seguido de sus sensores. */
+    for (int k = 0; k < nn; k++) {
+        header_create(nodes[k], k == 0);
+        for (int i = 0; i < n; i++) {
+            char id[SENSOR_ID_MAX], node[24];
+            if (!sensor_get(i, id, sizeof(id), NULL, 0, NULL)) continue;
+            sensor_node_id(id, node, sizeof(node));
+            if (strcmp(node, nodes[k]) == 0) row_create(i, id);
+        }
+    }
+
+    for (int r = 0; r < s_rows_n; r++) row_refresh(r);
 }
 
 static void list_refresh(void)
 {
     if (!s_list_view) return;
     if (s_rows_n != sensor_count()) list_build();
-    for (int i = 0; i < s_rows_n; i++) row_text(s_rows[i], i);
+    for (int r = 0; r < s_rows_n; r++) row_refresh(r);
 
-    /* El aviso de "sin sensores" lo apagaba SOLO refresh(), que corre en la
-     * vista de detalle. Como se entra por la lista, el cartel se quedaba
-     * prendido detrás de las filas: un "labo/sensor/<id>" flotando en el medio
-     * de la pantalla que parecía parte del fondo. */
+    /* El aviso de "sin sensores" lo apaga tambien la lista (no solo refresh()),
+     * si no queda prendido detras de las filas. */
     if (s_empty) {
         if (s_rows_n == 0) lv_obj_clear_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
         else               lv_obj_add_flag(s_empty, LV_OBJ_FLAG_HIDDEN);
@@ -678,9 +812,9 @@ static void sensors_open(lv_obj_t *parent)
     s_sel = 0;
     s_confirm = false;
 
-    /* La lista: se entra por acá. Mismo lenguaje visual que Config — píldoras
-     * centradas, sin barra de scroll y con snap, que en una pantalla redonda
-     * se lee mucho mejor que una lista recta pegada al borde. */
+    /* La lista: se entra por acá. Agrupada por nodo, con encabezados y filas
+     * con punto de estado + magnitud + valor. Scroll vertical normal (el
+     * snap-center no pega con los encabezados). */
     s_list_view = lv_obj_create(parent);
     lv_obj_remove_style_all(s_list_view);
     lv_obj_set_size(s_list_view, 240, 240);
@@ -688,11 +822,10 @@ static void sensors_open(lv_obj_t *parent)
     lv_obj_set_flex_flow(s_list_view, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_list_view, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(s_list_view, 7, 0);
-    lv_obj_set_style_pad_top(s_list_view, 100, 0);      /* centra la 1ª fila */
-    lv_obj_set_style_pad_bottom(s_list_view, 100, 0);   /* y la última */
+    lv_obj_set_style_pad_row(s_list_view, 6, 0);
+    lv_obj_set_style_pad_top(s_list_view, 26, 0);       /* empieza bajo el borde */
+    lv_obj_set_style_pad_bottom(s_list_view, 42, 0);    /* y termina sobre el borde */
     lv_obj_set_scroll_dir(s_list_view, LV_DIR_VER);
-    lv_obj_set_scroll_snap_y(s_list_view, LV_SCROLL_SNAP_CENTER);
     lv_obj_set_scrollbar_mode(s_list_view, LV_SCROLLBAR_MODE_OFF);
     lv_obj_add_flag(s_list_view, LV_OBJ_FLAG_EVENT_BUBBLE);   /* deja salir por gesto */
 

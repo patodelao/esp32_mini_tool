@@ -1,0 +1,17 @@
+[Unit]
+Description=Home-lab touch panel (MHS35 TFT)
+After=multi-user.target mosquitto.service network-online.target
+Wants=mosquitto.service
+
+[Service]
+# Corre como root para tener acceso directo a /dev/fb0 (video) y al touch
+# (/dev/input/event0). Es un panel dedicado, no expone nada.
+ExecStart=/usr/bin/python3 /home/pi/homelab/homelab_panel.py
+Restart=always
+RestartSec=3
+# La TFT es la consola por defecto; que el panel la tenga para él.
+StandardInput=tty
+TTYPath=/dev/tty1
+
+[Install]
+WantedBy=multi-user.target

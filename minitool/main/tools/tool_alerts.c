@@ -20,6 +20,7 @@
 #include "ui_notify.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -52,6 +53,63 @@ static void fmt_time(time_t ts, char *out, int out_size)
     snprintf(out, out_size, "%02d:%02d", tm.tm_hour, tm.tm_min);
 }
 
+/* Una alerta = tarjeta con: fila superior [punto de nivel · origen ··· hora] y
+ * el mensaje debajo, envuelto. El punto y el origen toman el color del nivel. */
+static void add_card(const notify_record_t *r)
+{
+    lv_obj_t *card = lv_obj_create(s_list);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_width(card, 190);
+    lv_obj_set_height(card, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(card, lv_color_hex(UI_CARD), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(card, 12, 0);
+    lv_obj_set_style_pad_all(card, 8, 0);
+    lv_obj_set_style_pad_row(card, 2, 0);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_color_t lc = lv_color_hex((uint32_t)strtoul(level_color(r->level), NULL, 16));
+
+    /* Fila superior: punto + origen + (empuja) + hora. */
+    lv_obj_t *top = lv_obj_create(card);
+    lv_obj_remove_style_all(top);
+    lv_obj_set_width(top, LV_PCT(100));
+    lv_obj_set_height(top, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(top, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(top, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(top, 6, 0);
+    lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *dot = lv_obj_create(top);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, 10, 10);
+    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(dot, lc, 0);
+
+    lv_obj_t *src = lv_label_create(top);
+    lv_obj_set_style_text_font(src, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(src, lc, 0);
+    lv_label_set_text(src, r->source);
+    lv_obj_set_flex_grow(src, 1);          /* empuja la hora a la derecha */
+
+    char hora[8];
+    fmt_time(r->ts, hora, sizeof(hora));
+    lv_obj_t *tl = lv_label_create(top);
+    lv_obj_set_style_text_font(tl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(tl, lv_color_hex(0x7F8C8D), 0);
+    lv_label_set_text(tl, hora);
+
+    /* Mensaje, envuelto. */
+    lv_obj_t *msg = lv_label_create(card);
+    lv_label_set_long_mode(msg, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(msg, LV_PCT(100));
+    lv_obj_set_style_text_font(msg, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(msg, lv_color_hex(0xDDE6F0), 0);
+    lv_label_set_text(msg, r->msg);
+}
+
 static void rebuild(void)
 {
     lv_obj_clean(s_list);
@@ -60,21 +118,7 @@ static void rebuild(void)
     for (int i = 0; i < n; i++) {
         notify_record_t r;
         if (!ui_notify_history_get(i, &r)) continue;
-
-        lv_obj_t *lbl = lv_label_create(s_list);
-        lv_label_set_recolor(lbl, true);
-        lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(lbl, LV_PCT(100));
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-
-        char hora[8];
-        fmt_time(r.ts, hora, sizeof(hora));
-
-        /* hora + origen en el color del nivel, y el mensaje debajo en blanco */
-        char buf[140];
-        snprintf(buf, sizeof(buf), "#7F8C8D %s#  #%s %s#\n#DDE6F0 %s#",
-                 hora, level_color(r.level), r.source, r.msg);
-        lv_label_set_text(lbl, buf);
+        add_card(&r);
     }
 
     if (s_empty) {
@@ -145,9 +189,11 @@ static void alerts_open(lv_obj_t *parent)
     lv_obj_set_size(s_list, 196, 148);
     lv_obj_align(s_list, LV_ALIGN_CENTER, 0, 4);
     lv_obj_set_flex_flow(s_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(s_list, 10, 0);
+    lv_obj_set_flex_align(s_list, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(s_list, 8, 0);
     lv_obj_set_scroll_dir(s_list, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(s_list, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_scrollbar_mode(s_list, LV_SCROLLBAR_MODE_OFF);
 
     s_empty = lv_label_create(parent);
     lv_obj_set_style_text_font(s_empty, &lv_font_montserrat_16, 0);

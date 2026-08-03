@@ -43,43 +43,81 @@ static uint32_t val_color(const char *id, uint32_t age)
     }
 }
 
-/* --- Piezas de UI --------------------------------------------------------- */
-
-static void hdr(const char *t)
+/* Color del punto de estado de un sensor de ambiente (verde ok / rojo alerta /
+ * gris viejo), independiente del color del valor (que usa val_color). */
+static uint32_t env_dot(const char *id, uint32_t age)
 {
-    lv_obj_t *l = lv_label_create(s_cont);
-    lv_obj_set_style_text_font(l, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(l, lv_color_hex(UI_TITLE), 0);
-    lv_obj_set_style_pad_top(l, 6, 0);
-    lv_label_set_text(l, t);
+    if (age > sensor_alert_stale_limit(id)) return UI_DIM;
+    switch (sensor_alert_state(id)) {
+        case SENSOR_ALERT_LOW:
+        case SENSOR_ALERT_HIGH: return UI_ALERT;
+        default:                return UI_OK;
+    }
 }
 
-/* Fila izq (etiqueta) / der (valor coloreado). */
-static void row(const char *left, const char *right, uint32_t color)
+/* --- Piezas de UI (tarjetas por sección) ---------------------------------- */
+
+/* Abre una tarjeta de sección con el título en color de acento y la devuelve
+ * para colgarle filas. */
+static lv_obj_t *card_begin(const char *title, uint32_t accent)
 {
-    lv_obj_t *c = lv_obj_create(s_cont);
+    lv_obj_t *card = lv_obj_create(s_cont);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_width(card, 198);
+    lv_obj_set_height(card, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(card, lv_color_hex(UI_CARD), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(card, 12, 0);
+    lv_obj_set_style_pad_all(card, 9, 0);
+    lv_obj_set_style_pad_row(card, 4, 0);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *t = lv_label_create(card);
+    lv_obj_set_style_text_font(t, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(t, lv_color_hex(accent), 0);
+    lv_label_set_text(t, title);
+    return card;
+}
+
+/* Fila etiqueta/valor dentro de una tarjeta, con punto de estado opcional. */
+static void card_row(lv_obj_t *card, const char *left, const char *right,
+                     uint32_t vcolor, bool dot, uint32_t dotcolor)
+{
+    lv_obj_t *c = lv_obj_create(card);
     lv_obj_remove_style_all(c);
     lv_obj_set_width(c, LV_PCT(100));
     lv_obj_set_height(c, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(c, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(c, 6, 0);
     lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+
+    if (dot) {
+        lv_obj_t *d = lv_obj_create(c);
+        lv_obj_remove_style_all(d);
+        lv_obj_set_size(d, 9, 9);
+        lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(d, lv_color_hex(dotcolor), 0);
+    }
 
     lv_obj_t *l = lv_label_create(c);
     lv_obj_set_style_text_font(l, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(l, lv_color_hex(UI_MUTED), 0);
     lv_label_set_text(l, left);
+    lv_obj_set_flex_grow(l, 1);          /* empuja el valor a la derecha */
 
     lv_obj_t *r = lv_label_create(c);
     lv_obj_set_style_text_font(r, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(r, lv_color_hex(color), 0);
+    lv_obj_set_style_text_color(r, lv_color_hex(vcolor), 0);
     lv_label_set_text(r, right);
 }
 
-/* Línea de ancho completo con wrap (para el texto de la alerta). */
-static void line(const char *text, uint32_t color)
+/* Texto de ancho completo (envuelto) dentro de una tarjeta (la alerta). */
+static void card_line(lv_obj_t *card, const char *text, uint32_t color)
 {
-    lv_obj_t *l = lv_label_create(s_cont);
+    lv_obj_t *l = lv_label_create(card);
     lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(l, LV_PCT(100));
     lv_obj_set_style_text_font(l, &lv_font_montserrat_16, 0);
@@ -104,16 +142,17 @@ static void rebuild(void)
     lv_obj_clean(s_cont);
 
     /* Refri */
-    hdr("Refri");
-    if (!alert_service_refri_has_data())
-        row("Puerta", "sin datos", UI_DIM);
-    else {
+    lv_obj_t *c = card_begin("Refri", 0x4AA8FF);
+    if (!alert_service_refri_has_data()) {
+        card_row(c, "Puerta", "sin datos", UI_DIM, false, 0);
+    } else {
         bool open = alert_service_refri_open();
-        row("Puerta", open ? "ABIERTA" : "cerrada", open ? UI_ALERT : UI_OK);
+        uint32_t col = open ? UI_ALERT : UI_OK;
+        card_row(c, "Puerta", open ? "ABIERTA" : "cerrada", col, true, col);
     }
 
     /* Ambiente */
-    hdr("Ambiente");
+    c = card_begin("Ambiente", 0x35D07F);
     int n = sensor_count(), env = 0;
     for (int i = 0; i < n; i++) {
         char id[SENSOR_ID_MAX], val[16], name[40];
@@ -123,13 +162,13 @@ static void rebuild(void)
         sensor_friendly_name(id, name, sizeof(name));
         char rv[24];
         snprintf(rv, sizeof(rv), "%s %s", val, sensor_unit(id));
-        row(name, rv, val_color(id, age));
+        card_row(c, name, rv, val_color(id, age), true, env_dot(id, age));
         env++;
     }
-    if (env == 0) row("", "sin sensores", UI_DIM);
+    if (env == 0) card_row(c, "", "sin sensores", UI_DIM, false, 0);
 
     /* Red */
-    hdr("Red");
+    c = card_begin("Red", 0x1ABC9C);
     int fn = fleet_count(), on = 0;
     for (int i = 0; i < fn; i++) {
         char nid[24];
@@ -140,10 +179,10 @@ static void rebuild(void)
     char rb[24];
     snprintf(rb, sizeof(rb), "%d/%d online", on, fn);
     uint32_t netc = (fn > 0 && on == fn) ? UI_OK : (on == 0 ? UI_ALERT : UI_WARN);
-    row("Nodos", rb, netc);
+    card_row(c, "Nodos", rb, netc, true, netc);
 
     /* Última alerta */
-    hdr("Ultima alerta");
+    c = card_begin("Ultima alerta", 0xE67E22);
     notify_record_t rec;
     if (ui_notify_history_count() > 0 && ui_notify_history_get(0, &rec)) {
         char hora[8] = "--:--";
@@ -154,9 +193,9 @@ static void rebuild(void)
         }
         char txt[120];
         snprintf(txt, sizeof(txt), "%s  %s: %s", hora, rec.source, rec.msg);
-        line(txt, level_color(rec.level));
+        card_line(c, txt, level_color(rec.level));
     } else {
-        row("", "sin alertas", UI_DIM);
+        card_row(c, "", "sin alertas", UI_DIM, false, 0);
     }
 }
 
@@ -205,12 +244,14 @@ static void casa_open(lv_obj_t *parent)
 
     s_cont = lv_obj_create(parent);
     lv_obj_remove_style_all(s_cont);
-    lv_obj_set_size(s_cont, 200, 158);
-    lv_obj_align(s_cont, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_set_size(s_cont, 214, 168);
+    lv_obj_align(s_cont, LV_ALIGN_CENTER, 0, 12);
     lv_obj_set_flex_flow(s_cont, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(s_cont, 4, 0);
+    lv_obj_set_flex_align(s_cont, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(s_cont, 7, 0);
     lv_obj_set_scroll_dir(s_cont, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(s_cont, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_scrollbar_mode(s_cont, LV_SCROLLBAR_MODE_OFF);
 
     s_sig[0] = '\0';
     rebuild();

@@ -56,13 +56,16 @@ sudo ufw --force enable
 sudo ufw logging off   # ver "Salud de la SD" abajo
 ```
 
-**Salud de la SD** — En una Pi los logs desgastan la tarjeta. Dos cosas dejan
-`/var/log` tranquilo sin montar `tmpfs` (que agrega riesgo en el arranque):
-- **journald** ya está en modo **volátil** (escribe a RAM `/run`, no a la SD) —
-  es el default cuando no existe `/var/log/journal`.
+**Salud de la SD** — En una Pi los logs desgastan la tarjeta. Medidas aplicadas:
+- **journald** en modo **volátil** (escribe a RAM `/run`, no a la SD) — es el
+  default cuando no existe `/var/log/journal`.
 - **`ufw logging off`**: el logging de ufw estaba llenando `kern.log` (llegó a
   51 MB) con cada paquete de broadcast/multicast bloqueado de la LAN. Apagarlo
   cortó de raíz la escritura pesada. Con esto `/var/log` bajó de 58 MB a ~7 MB.
+- **log2ram** (2026-08, tras el susto de undervoltage): monta `/var/log` en RAM
+  y lo baja a la SD una vez al día y en el apagado — cubre lo que journald
+  volátil no toca (logs de apps/apt). Instalado desde `github.com/azlux/log2ram`,
+  se activa al reiniciar; config en `/etc/log2ram.conf` (`SIZE_LOG`).
 
 **SSH solo por clave** — `PasswordAuthentication no` y `PermitRootLogin no` en
 `config/etc/ssh/sshd_config`. El acceso es con la clave `id_ed25519_homelab`
@@ -199,12 +202,62 @@ En `push.env`: `MQTT_USER`/`MQTT_PASS` (los de la flota), y `NTFY_URL` con un
 topic largo e impredecible (es tu clave). En el celu: app **ntfy** suscripta al
 mismo topic. `MIN_LEVEL` filtra por nivel (alarma/aviso/ok).
 
+## Home Assistant — `ha_discovery.py`
+
+HA corre en un contenedor **Docker** (`ghcr.io/home-assistant/home-assistant:stable`)
+con la config en `~/homelab/ha-config/` (montada en el contenedor). Esa carpeta
+**no va al repo**: tiene `secrets.yaml` y `.storage/` con tokens de sesión. HA es
+**cliente** MQTT del broker (no broker propio), así ve todo `labo/#` vía el bridge.
+
+`ha_discovery.py` siembra el **MQTT Discovery**: escucha `labo/#` unos segundos,
+arma la lista de sensores/nodos/puertas y publica los `homeassistant/.../config`
+retenidos, para que HA descubra la flota sola (agrupada por nodo como
+dispositivo). Se corre a mano cuando cambia el set de tópicos:
+
+```bash
+python3 ~/homelab/ha_discovery.py     # publica las entidades y termina
+```
+
+## RetroPie / EmulationStation
+
+RetroPie está instalado **sobre este mismo sistema** (Debian 13 / 64-bit) con el
+instalador oficial `RetroPie-Setup` ("Basic install"). Convive con HA: **HA corre
+24/7 en Docker de fondo** y EmulationStation arranca en el **HDMI** manejado con
+**joystick** (nada de touch — la pantalla táctil se descartó).
+
+**Arranque automático de ES** — el menú de RetroPie no aplicaba en este sistema
+(instalado sobre otro OS), así que se armó a mano con la cadena
+autologin → `.bash_profile` → `autostart.sh` → `emulationstation`:
+
+```bash
+# 1. autologin de pi en la consola tty1
+sudo raspi-config nonint do_boot_behaviour B2
+# 2. el script que lanza ES
+echo 'emulationstation #auto' | sudo tee /opt/retropie/configs/all/autostart.sh
+# 3. hook de login: lanza ES SOLO en tty1 (por SSH no, así no interfiere)
+printf '%s\n' '[ -f ~/.profile ] && . ~/.profile' \
+  'if [ "$(tty)" = "/dev/tty1" ]; then bash /opt/retropie/configs/all/autostart.sh; fi' \
+  > ~/.bash_profile
+# 4. pi necesita estos grupos para dibujar en el HDMI
+sudo usermod -aG video,render,input,audio,tty pi
+```
+
+**Video:** driver **full KMS** (`dtoverlay=vc4-kms-v3d`), el mejor para emular en
+la Pi 4. Se intentó *fake KMS* + `fbcp` para **espejar** el juego a la TFT de
+3.5", pero **no es viable en 64-bit/Trixie**: la capa `dispmanx` que necesitan
+esas herramientas fue eliminada en el OS de 64 bits. El juego va solo por HDMI;
+la TFT queda para consola/dashboard.
+
+Las partidas/configs/BIOS se respaldan con `scripts/backup-homelab.sh` (las ROMs
+no: son pesadas y re-descargables — la colección completa, 12 GB, está en el PC).
+
 ## Estructura de esta carpeta
 
 ```
 raspberry/
 ├── cam_capture.py          agente de captura de la cámara
 ├── homelab-cam.service     unit systemd del agente
+├── ha_discovery.py         siembra el MQTT Discovery de HA (correr a mano)
 ├── gallery/
 │   ├── gallery.py          galería web de las fotos (stdlib, puerto 8088)
 │   └── homelab-gallery.service
@@ -215,7 +268,9 @@ raspberry/
 │   ├── backup-homelab.sh   respaldo de lo irrecuperable (ver abajo)
 │   └── pi-snapshot.sh      refresca config/ y manifests/ desde el PC
 ├── config/                 copia versionada de la config REAL de la Pi
-│   └── etc/{mosquitto,samba,ssh}/...
+│   ├── etc/{mosquitto,samba,ssh}/...
+│   ├── boot/config.txt              overlays de video (KMS, mhs35), gpu_mem
+│   └── {autologin.conf, autostart.sh, .bash_profile}   arranque de RetroPie
 └── manifests/              inventario para reconstruir igual
     ├── apt-manual.txt          paquetes instalados a mano
     ├── systemd-enabled.txt     servicios habilitados
@@ -251,6 +306,13 @@ Conserva los últimos 7 backups. Para automatizarlo semanalmente, agregar a
 ```
 
 ## Reconstruir la Pi de cero
+
+> **Atajo de recuperación (2026-08):** el sistema vive en una microSD de **64GB**
+> (migrada desde la de 16GB con `rpi-clone`; ver `[[pi-sd-64gb-migration]]` en
+> memoria). La **SD de 16GB se guardó como respaldo físico** — si la de 64GB
+> muere, lo más rápido es **ponerla y arrancar** (queda a un snapshot algo viejo,
+> pero funcional) y restaurar desde ahí. El paso a paso de abajo es para
+> reconstruir de cero si no hubiera ese respaldo.
 
 Si la SD muere y hay que empezar de nuevo:
 

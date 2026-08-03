@@ -1,6 +1,11 @@
 CONFIG_LV_USE_USER_DATA=y
 CONFIG_LV_COLOR_16_SWAP=y
 CONFIG_LV_COLOR_DEPTH_16=y
+
+# Pool de LVGL a 64KB (default 32KB): el menú rota el bloque central con
+# transform_angle, que necesita un layer buffer transitorio (~22KB) además de
+# los objetos. Con 32KB no entra y la rotación se descarta.
+CONFIG_LV_MEM_SIZE_KILOBYTES=64
 CONFIG_LV_FONT_MONTSERRAT_16=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_FONT_MONTSERRAT_48=y

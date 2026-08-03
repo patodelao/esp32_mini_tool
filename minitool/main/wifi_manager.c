@@ -234,7 +234,20 @@ void wifi_manager_init(void)
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
 
     ESP_ERROR_CHECK(esp_wifi_start());
-    
+
+    /* --- Estabilidad con batería ---
+     * Con batería, los picos de corriente del WiFi (TX ~400-500 mA de golpe)
+     * hacen caer la tensión; si toca el umbral de brownout el S3 se resetea y,
+     * como el arranque vuelve a pedir mucha corriente, queda en un loop que solo
+     * se sale enchufando el USB (= el síntoma de que se "traba" con batería).
+     *   - Bajar la potencia de TX aplana ese pico (en una LAN de casa 11 dBm
+     *     sobra; subir si hiciera falta alcance).
+     *   - Modem-sleep baja el consumo promedio y deja recuperar la batería
+     *     entre ráfagas (agrega ~100 ms de latencia, irrelevante para telemetría).
+     * No van con ESP_ERROR_CHECK: si fallan, no vale la pena tirar el arranque. */
+    esp_wifi_set_max_tx_power(44);          /* 44 * 0.25 = 11 dBm (default ~20) */
+    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+
     /* Si en la última sesión el usuario lo dejó conectado, reconectar automáticamente */
     if (s_should_connect) {
         ESP_LOGI(TAG, "Auto-conectando a red guardada: %s", s_ssid);
