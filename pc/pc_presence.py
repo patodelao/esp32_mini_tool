@@ -30,8 +30,10 @@ T_DISC    = "homeassistant/binary_sensor/pc_escritorio/config"
 
 # HA agrega el sensor solo con esto (retenido); device_class connectivity:
 #   on = online (PC encendido), off = offline (PC apagado)
+# name=None: la entidad hereda el nombre del device y NO se duplica el id
+# (si no, HA arma "device + entidad" -> binary_sensor.pc_escritorio_pc_escritorio).
 DISCOVERY = {
-    "name": "PC escritorio",
+    "name": None,
     "unique_id": "pc_escritorio",
     "state_topic": T_STATE,
     "payload_on": "online",
