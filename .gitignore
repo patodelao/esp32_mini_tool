@@ -14,3 +14,12 @@ sdkconfig.old
 # Credenciales locales (WiFi, OTA). Ver los .example de cada proyecto.
 **/secrets.h
 **/secrets.ini
+
+# Credenciales de servicios de la Pi (local_key de Tuya, token ntfy, etc.).
+# Se versionan solo los .example.
+**/*.env
+!**/*.env.example
+
+# Cache de Python (se regenera solo).
+__pycache__/
+*.pyc

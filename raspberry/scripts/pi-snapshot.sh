@@ -8,7 +8,7 @@
 #
 # Por defecto usa el alias SSH `homelab` (~/.ssh/config). Si te conectás por
 # contraseña o con otro host, pasalo así:
-#   SSH_HOST=pi@192.168.1.100 bash raspberry/scripts/pi-snapshot.sh
+#   SSH_HOST=pi@192.168.1.99 bash raspberry/scripts/pi-snapshot.sh
 #
 # Abre UNA conexión SSH compartida (te pide la clave una sola vez), saltea los
 # archivos que no existan y no pisa un manifest si el comando falla.

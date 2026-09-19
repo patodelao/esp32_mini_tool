@@ -45,6 +45,8 @@
 #include <ArduinoOTA.h>
 #include <PubSubClient.h>
 #include <DHT.h>
+#include <IRremoteESP8266.h>
+#include <IRsend.h>
 
 // --- Configuracion: EDITAR ANTES DE FLASHEAR -------------------------------
 //
@@ -78,6 +80,12 @@
 #define DHT_PIN   D2        // GPIO4
 #define DHT_TYPE  DHT22     // AM2302 = DHT22
 #define SUELO_PIN A0        // unica entrada analogica del ESP8266
+
+// IR: LED infrarrojo (via 2N2222) para apagar la TV Samsung por comando MQTT.
+// D1 (GPIO5) esta libre y es seguro (sin restricciones de boot). Va a la BASE
+// del transistor a traves de Rb; el LED IR lo maneja el colector (ver README).
+#define IR_PIN            D1          // GPIO5 -> base del 2N2222
+#define SAMSUNG_POWER_OFF 0xE0E019E6  // apagado DISCRETO (siempre OFF, no toggle)
 
 // Alimentacion de la sonda de suelo. La sonda resistiva se CORROE si esta
 // siempre energizada (dura semanas en vez de meses). Si mueves el VCC del
@@ -140,11 +148,17 @@
 #define ID_VIEJO               "sala"
 
 // --- MQTT ------------------------------------------------------------------
-// Broker primario del home-lab: ahora en el nodo del refri (opendoor, .108),
-// que esta siempre enchufado. Antes en la Raspberry Pi (.100), que se apaga y
-// dejaba a la flota sin broker. La Pi hace de bridge/logging cuando esta.
-// IP fija por reserva DHCP.
-#define MQTT_BROKER   "192.168.1.108"
+// Broker primario del home-lab: la Mosquitto de la Raspberry Pi.
+//
+// Historia: por un tiempo el primario fue el refri (opendoor, .108) con broker
+// embebido, para no depender de la Pi. Se revirtio (2026-09): el refri resulto
+// ser el punto unico de falla (con el refri caido, TODA la flota se queda sin
+// broker) y hoy el centro es la Pi, donde viven Home Assistant, el monitor y
+// el push.
+//
+// OJO: la Pi NO tiene reserva DHCP, su IP se mueve (era .100, hoy .99). Si el
+// nodo deja de publicar, revisa primero si la Pi cambio de IP.
+#define MQTT_BROKER   "192.168.1.99"
 #define MQTT_PORT     1883
 
 // Credenciales del broker. NULL = anonimo (broker sin auth). Para broker con
@@ -170,6 +184,7 @@
 #define TOPIC_INTERV  "labo/config/" NODE_ID "/suelo/intervalo"   /* idem, en segundos */
 #define TOPIC_ALERTA  "labo/alerta/" NODE_ID                      /* bus de alertas del home-lab */
 #define TOPIC_CMD     "labo/nodo/"   NODE_ID "/cmd"               /* ordenes desde la tool Control */
+#define TOPIC_TV      "labo/nodo/"   NODE_ID "/tv"                /* "off" -> apaga la TV por IR */
 
 // Cada cuanto leer y publicar el AIRE. El DHT22 admite 1 lectura / 2 s.
 static const unsigned long PUBLICAR_MS = 10000;
@@ -210,6 +225,9 @@ DHT dht(DHT_PIN, DHT_TYPE);
 #endif
 WiFiClient   wifiClient;
 PubSubClient mqtt(wifiClient);
+IRsend       irsend(IR_PIN);                 // emisor IR (apagado de la TV)
+static volatile bool s_apagar_tv = false;    // flag: enviar el codigo IR en el loop
+static volatile bool s_test_led  = false;    // flag: parpadeo largo de prueba de cableado
 
 static unsigned long ultimaPublicacion = 0;   // aire
 static unsigned long ultimaTelemetria  = 0;
@@ -379,6 +397,19 @@ static void on_mqtt(char *topic, byte *payload, unsigned int len) {
   memcpy(b, payload, n);
   b[n] = '\0';
 
+  if (strcmp(topic, TOPIC_TV) == 0) {
+    // Solo levantamos el flag: el pulso IR (~70ms) se envia en el loop, no
+    // aca dentro (que corre desde mqtt.loop()), para no alargar el callback.
+    if (strncmp(b, "off", 3) == 0) {
+      s_apagar_tv = true;
+      Serial.println("TV: pedido de apagado por IR");
+    } else if (strncmp(b, "test", 4) == 0) {
+      s_test_led = true;
+      Serial.println("TV: prueba de cableado (parpadeo largo)");
+    }
+    return;
+  }
+
   if (strcmp(topic, TOPIC_CMD) == 0) {
     Serial.printf("CMD: %s\n", b);
     if (strcmp(b, "leer") == 0) {
@@ -476,6 +507,7 @@ static void mqttAlConectar() {
   Serial.println("Limpieza: borrados los retenidos de '" ID_VIEJO "'");
 #endif
   mqtt.subscribe(TOPIC_CMD);      // ordenes desde la tool Control
+  mqtt.subscribe(TOPIC_TV);       // apagado de la TV por IR
 #if ENABLE_SUELO
   mqtt.subscribe(TOPIC_UMBRAL);   // config de riego del minitool (retenida)
   mqtt.subscribe(TOPIC_HISTER);
@@ -613,6 +645,8 @@ void setup() {
   dht.begin();
 #endif
 
+  irsend.begin();   // emisor IR para el apagado de la TV
+
   // Client id unico en el broker publico (compartido con todo internet).
   snprintf(clientId, sizeof(clientId), "esp8266-%s-%06X", NODE_ID, ESP.getChipId());
 
@@ -640,6 +674,35 @@ void loop() {
   mqttMantener();
   ArduinoOTA.handle();   // atiende una actualizacion por WiFi si llega
   mqtt.loop();
+
+  // Apagado de la TV por IR: se pidio desde MQTT (on_mqtt levanto el flag). El
+  // pulso Samsung dura ~70ms; se dispara aca, no en el callback, y no molesta a
+  // los sensores (que miden cada 10s+). No hace falta una task tipo ESP32.
+  if (s_apagar_tv) {
+    s_apagar_tv = false;
+    // Enviamos el codigo 3 veces con pausas cortas: a ~4m el receptor de la TV
+    // puede perder un pulso. Como es apagado DISCRETO (no toggle), repetir es
+    // seguro: nunca la vuelve a prender. ~3 x 70ms = ~0.3s, invisible para los
+    // sensores (que miden cada 10s).
+    for (int i = 0; i < 3; i++) {
+      irsend.sendSAMSUNG(SAMSUNG_POWER_OFF, 32);
+      delay(40);
+    }
+    Serial.println("IR: apagado Samsung enviado x3 (0xE0E019E6)");
+  }
+
+  // Prueba de CABLEADO (no es la señal real): parpadeo LARGO y visible a ojo o
+  // camara, para confirmar que GPIO -> transistor -> LED conmuta. Pulsos de
+  // 250ms x6: seguros para el LED IR (son pulsos, no DC continuo que lo
+  // sobrecalentaria). Bloquea ~3s, pero es una prueba manual puntual.
+  if (s_test_led) {
+    s_test_led = false;
+    Serial.println("IR: parpadeo de prueba (6 x 250ms) -- mira el LED/camara");
+    for (int i = 0; i < 6; i++) {
+      digitalWrite(IR_PIN, HIGH); delay(250);
+      digitalWrite(IR_PIN, LOW);  delay(250);
+    }
+  }
 
   unsigned long ahora = millis();
 

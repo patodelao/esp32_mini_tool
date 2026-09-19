@@ -1,8 +1,16 @@
 # esp32_mini_tool
 
+> **📦 Etapa cerrada (septiembre 2026).** El home-lab siguió en el repo
+> **`homelab`** (carpeta `Proyectos_ESP32/homelab`): el servidor se mudó a un Mac
+> mini con Debian, la Raspberry Pi quedó solo como consola RetroPie y los nodos ESP
+> de acá (minitool, pieza, refri, cam) quedaron fuera. Los servicios de la Pi que
+> migraron (puentes de Tuya y de la tira LED, push, monitor, logger, cámara, `pc/`,
+> y el nodo `esp01_relay`) ahora viven allá. Este repo queda como registro de los
+> nodos ESP y de la etapa Raspberry Pi.
+
 Home-lab casero: un reloj-herramienta con pantalla táctil que hace de **consola**
 del sistema, y nodos ESP que miden y actúan. Todo se comunica por **MQTT** a
-través de un broker **Mosquitto propio en una Raspberry Pi** (`192.168.1.100`):
+través de un broker **Mosquitto propio en una Raspberry Pi** (`192.168.1.99`):
 los nodos publican, el minitool muestra y configura. Nada sale de la LAN.
 
 ## Proyectos
@@ -25,8 +33,10 @@ particiones).
 
 ## Cómo se hablan: convención de topics
 
-Broker propio **Mosquitto** en la Raspberry Pi `192.168.1.100:1883` (IP fija por
-reserva DHCP). Cada nodo lo lleva hardcodeado; se cambia en `mqtt_hub.c`
+Broker propio **Mosquitto** en la Raspberry Pi `192.168.1.99:1883`. ⚠️ La Pi
+**no tiene reserva DHCP**: ya se movió de `.100` a `.99`, y cada vez que cambia
+hay que reflashear a mano todo lo que la referencia (ver más abajo). Conviene
+reservarle la IP en el router. Cada nodo lo lleva hardcodeado; se cambia en `mqtt_hub.c`
 (minitool), el `MQTT_BROKER_URI` de refri/cam, y `MQTT_BROKER` del ESP8266. Se
 dejó el público `broker.hivemq.com` para no depender de un servicio ajeno ni
 mandar afuera datos de la casa (incluidas las fotos de la cámara). Cualquier

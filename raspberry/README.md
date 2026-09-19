@@ -1,6 +1,14 @@
 # raspberry — servicios del home-lab en la Raspberry Pi
 
-Lo que corre en la Pi (`192.168.1.100`, usuario `pi`), fuera de los ESP. Está
+> **📦 Registro histórico.** Desde septiembre 2026 la Pi ya **no** es el servidor:
+> quedó solo como consola RetroPie. El servidor (broker, Home Assistant y todos los
+> servicios `homelab-*`) se mudó a un Mac mini, y su código siguió en el repo
+> **`homelab`** (`Proyectos_ESP32/homelab`). Acá queda solo lo propio de la Pi:
+> la configuración histórica (`config/`, `manifests/`), sus scripts
+> (`scripts/`) y el panel táctil descartado (`panel/`). El resto de este README
+> describe cómo era la etapa Pi.
+
+Lo que corre en la Pi (`192.168.1.99`, usuario `pi`), fuera de los ESP. Está
 acá para poder redesplegarlo si se muere la SD.
 
 ## Broker MQTT
@@ -141,7 +149,7 @@ LAN, igual que el resto.
 Abrir desde cualquier equipo de casa:
 
 ```
-http://192.168.1.100:8088/     (o http://retropie.local:8088/)
+http://192.168.1.99:8088/      (o http://retropie.local:8088/)
 ```
 
 Instalación:

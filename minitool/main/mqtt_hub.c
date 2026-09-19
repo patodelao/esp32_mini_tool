@@ -11,12 +11,19 @@
 
 static const char *TAG = "mqtt_hub";
 
-/* Broker primario del home-lab: ahora vive en el nodo del refri (opendoor,
- * .108), que está siempre enchufado. Antes estaba en la Raspberry Pi (.100),
- * que se apaga o se reutiliza y dejaba a toda la flota sin broker; el refri, en
- * cambio, no duerme, así que la red de sensores no depende de la Pi. La Pi ahora
- * hace de bridge/logging cuando está. IP fija por reserva DHCP. */
-#define MQTT_BROKER_URI "mqtt://192.168.1.108"
+/* Broker primario del home-lab: la Mosquitto de la Raspberry Pi (.100).
+ *
+ * Historia: por un tiempo el primario fue el nodo del refri (opendoor, .108),
+ * con un broker embebido (Mongoose), para que la flota no dependiera de la Pi.
+ * Se revirtió (2026-09) porque el refri resultó ser el punto único de falla —
+ * con el refri caído, TODA la flota se queda sin broker — y porque el centro
+ * del home-lab ahora es la Pi: ahí viven Home Assistant, el monitor, el puente
+ * de la tira LED y el push. La Pi escucha en la LAN (conf.d/lan.conf).
+ *
+ * OJO: la Pi NO tiene reserva DHCP todavía, así que su IP se mueve (era .100,
+ * hoy .99). Si un día la tool Sensores aparece vacía, lo primero a revisar es
+ * si la Pi cambió de IP: `ping homelab.local` o mirarlo en el router. */
+#define MQTT_BROKER_URI "mqtt://192.168.1.99"
 
 /* Credenciales del broker. Sin secrets.h (o con MQTT_USER sin definir) el
  * cliente conecta anónimo, compatible con el broker sin auth. Para migrar a un

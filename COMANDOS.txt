@@ -189,11 +189,13 @@ LA FLOTA  (IP fija por reserva DHCP)
 
 
 ================================================================================
-  RASPBERRY PI (192.168.1.100) - ahora BRIDGE/logging, ya NO el broker
+  RASPBERRY PI (192.168.1.99) - el BROKER del home-lab (+ HA, monitor, push)
 ================================================================================
   Entrar por SSH (solo por clave):
     ssh homelab
-    (equivale a: ssh -i C:/Users/alons/.ssh/id_ed25519_homelab pi@192.168.1.100)
+    (equivale a: ssh -i C:/Users/alons/.ssh/id_ed25519_homelab pi@192.168.1.99)
+    OJO: la Pi no tiene reserva DHCP, su IP se mueve (era .100, hoy .99). Si
+    "ssh homelab" falla, corregi HostName en C:/Users/alons/.ssh/config.
 
   Aplicar el bridge hacia el broker de opendoor:
     sudo cp bridge.conf /etc/mosquitto/conf.d/    # desde raspberry/config/etc/mosquitto/conf.d/
