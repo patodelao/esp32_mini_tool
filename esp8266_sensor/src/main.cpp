@@ -158,7 +158,10 @@
 //
 // OJO: la Pi NO tiene reserva DHCP, su IP se mueve (era .100, hoy .99). Si el
 // nodo deja de publicar, revisa primero si la Pi cambio de IP.
-#define MQTT_BROKER   "192.168.1.99"
+/* El servidor del home-lab es el Mac mini (IP fija en el propio Debian, no una
+ * reserva del router). Antes esto apuntaba a la Raspberry Pi (192.168.1.99), que ya no existe:
+ * el nodo conectaba al WiFi y nunca al broker, sin ningun error visible. */
+#define MQTT_BROKER   "192.168.1.104"
 #define MQTT_PORT     1883
 
 // Credenciales del broker. NULL = anonimo (broker sin auth). Para broker con

@@ -83,7 +83,10 @@
  * que está siempre enchufado. Antes en la Raspberry Pi (.100), que se apaga y
  * dejaba a la flota sin broker. La Pi hace de bridge/logging cuando está.
  * IP fija por reserva DHCP. */
-#define MQTT_BROKER_URI    "mqtt://192.168.1.108"
+/* El servidor del home-lab es el Mac mini (IP fija en el propio Debian, no una
+ * reserva del router). Antes esto apuntaba a el refri (192.168.1.108), que ya no existe:
+ * el nodo conectaba al WiFi y nunca al broker, sin ningun error visible. */
+#define MQTT_BROKER_URI    "mqtt://192.168.1.104"
 #define TELEMETRY_MS       60000
 
 #define DEVICE_ID          "cam"

@@ -23,7 +23,10 @@ static const char *TAG = "mqtt_hub";
  * OJO: la Pi NO tiene reserva DHCP todavía, así que su IP se mueve (era .100,
  * hoy .99). Si un día la tool Sensores aparece vacía, lo primero a revisar es
  * si la Pi cambió de IP: `ping homelab.local` o mirarlo en el router. */
-#define MQTT_BROKER_URI "mqtt://192.168.1.99"
+/* El servidor del home-lab es el Mac mini (IP fija en el propio Debian, no una
+ * reserva del router). Antes esto apuntaba a la Raspberry Pi (192.168.1.99), que ya no existe:
+ * el nodo conectaba al WiFi y nunca al broker, sin ningun error visible. */
+#define MQTT_BROKER_URI "mqtt://192.168.1.104"
 
 /* Credenciales del broker. Sin secrets.h (o con MQTT_USER sin definir) el
  * cliente conecta anónimo, compatible con el broker sin auth. Para migrar a un
